@@ -1,84 +1,59 @@
-import { useEffect, useState , type ReactElement } from 'react'
-import { request, type RunState, type TestState } from '../api.js'
-import { Field, Panel, StatusLine } from '../components.js'
+import { useEffect, useState, type ReactElement } from 'react'
+import { Panel, StatusLine } from '../components.js'
+import { getThemePreference, setThemePreference, type ThemePreference } from '../theme.js'
 
-/** 设置页：账号 / 默认路径 / 测试盒子等集中管理。 */
+/** 设置页：应用自身配置（外观主题等）。业务配置在各自页面编辑。 */
 
-const FIELDS: Array<{ id: string; label: string; hint?: string; mono?: boolean; wide?: boolean; type?: string }> = [
-  { id: 'username', label: '平台账号' },
-  { id: 'password', label: '平台密码', type: 'password', hint: '留空沿用已保存密码' },
-  { id: 'workbookPath', label: '设备目录（或批量父目录）', mono: true, wide: true },
-  { id: 'testCasesPath', label: '测试用例路径（XTS 自动测试）', mono: true, wide: true, hint: '默认 D:\\ohos\\XTS6.1\\testcase' },
-  { id: 'testBoxSn', label: '测试盒子 SN（DCTS 必需）', mono: true, wide: true, hint: '默认 370100654d4d43202010000071dd7b00' },
-  { id: 'mirrorPath', label: '固件包路径（默认值）', mono: true, wide: true },
-  { id: 'contactPhone', label: '企业联系电话' },
-  { id: 'contactEmail', label: '企业邮箱' },
-  { id: 'waiverPath', label: '豁免资料路径（默认值）', mono: true, wide: true },
-  { id: 'waiverAssessmentNumber', label: '测评编号（豁免默认值）' },
+const THEME_OPTIONS: Array<{ id: ThemePreference; label: string; swatch: string }> = [
+  { id: 'dark', label: '深色', swatch: '#141519' },
+  { id: 'light', label: '浅色', swatch: '#f2f4f8' },
+  { id: 'system', label: '跟随系统', swatch: 'linear-gradient(90deg,#141519 50%,#f2f4f8 50%)' },
 ]
 
-export function SettingsPage(props: { state: RunState; test: TestState }): ReactElement {
-  const [values, setValues] = useState<Record<string, string>>({})
-  const [hasPassword, setHasPassword] = useState(false)
-  const [loaded, setLoaded] = useState(false)
+export function SettingsPage(): ReactElement {
+  const [theme, setTheme] = useState<ThemePreference>(getThemePreference())
   const [note, setNote] = useState('')
   const [noteTone, setNoteTone] = useState<'ok' | 'error'>('ok')
 
   useEffect(() => {
-    let active = true
-    void (async () => {
-      const response = await request<{ ok: boolean; settings?: Record<string, string>; hasPassword?: boolean }>('settings', 'GET')
-      if (!active || !response.ok || !response.settings) return
-      setValues(response.settings)
-      setHasPassword(response.hasPassword === true)
-      setLoaded(true)
-    })()
-    return () => { active = false }
+    setTheme(getThemePreference())
   }, [])
 
-  async function save(): Promise<void> {
-    const patch: Record<string, string> = {}
-    for (const field of FIELDS) patch[field.id] = (values[field.id] ?? '').trim()
-    if (!patch.password) delete patch.password
-    const response = await request<{ ok: boolean; message?: string }>('settings', 'POST', patch)
-    setNoteTone(response.ok ? 'ok' : 'error')
-    setNote(response.ok ? '设置已保存。' : (response.message || '设置保存失败。'))
-    if (response.ok && patch.password) {
-      setHasPassword(true)
-      setValues((previous) => ({ ...previous, password: '' }))
-    }
+  function changeTheme(preference: ThemePreference): void {
+    setThemePreference(preference)
+    setTheme(preference)
+    setNoteTone('ok')
+    setNote(`外观已切换为${THEME_OPTIONS.find((option) => option.id === preference)?.label ?? preference}。`)
   }
 
   return (
     <>
       <div className="page-head">
         <h1>设置</h1>
-        <p>账号、默认路径与测试配置集中管理；设置持久化在本机用户数据目录（0600）。</p>
+        <p>应用外观等软件配置；平台账号在各功能页登录管理。</p>
       </div>
 
-      <Panel title="全部设置" meta={hasPassword ? '已保存密码' : '未保存密码'}>
-        <div className="grid">
-          {FIELDS.map((field) => (
-            <Field
-              key={field.id}
-              id={`s-${field.id}`}
-              label={field.label}
-              value={values[field.id] ?? ''}
-              type={field.id === 'password' ? 'password' : 'text'}
-              hint={field.id === 'password' && hasPassword ? '已保存密码，留空则沿用' : field.hint}
-              placeholder={field.id === 'password' && hasPassword ? '已保存密码，留空则沿用' : undefined}
-              mono={field.mono}
-              wide={field.wide}
-              onChange={(value) => setValues((previous) => ({ ...previous, [field.id]: value }))}
-            />
+      <Panel title="外观">
+        <div className="theme-grid">
+          {THEME_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              className={`theme-card${theme === option.id ? ' theme-card--active' : ''}`}
+              onClick={() => changeTheme(option.id)}
+            >
+              <span className="theme-swatch" style={{ background: option.swatch }} />
+              <span className="theme-label">{option.label}</span>
+            </button>
           ))}
         </div>
-        <div className="actions">
-          <button className="btn btn--primary" disabled={!loaded} onClick={() => void save()}>保存全部设置</button>
-        </div>
-        {!loaded ? <p className="muted">正在读取设置…</p> : null}
-        {note ? <StatusLine tone={noteTone}>{note}</StatusLine> : null}
       </Panel>
+
+      <Panel title="关于">
+        <p className="path">{`XTS 报告上传 · v0.3.0`}</p>
+        <p className="path">凭据保存在本机用户数据目录（0600 / DPAPI 加密）；业务脚本与 DSH 插件同源。</p>
+      </Panel>
+
+      {note ? <StatusLine tone={noteTone}>{note}</StatusLine> : null}
     </>
   )
 }

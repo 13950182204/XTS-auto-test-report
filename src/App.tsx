@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { request, useStatusPolling, type RunState, type TestState } from './api.js'
 import { Bar, asRecord, clampPercent, num, str } from './components.js'
+import { initTheme } from './theme.js'
 import { MaterialsPage } from './pages/Materials.js'
 import { TestRunnerPage } from './pages/TestRunner.js'
 import { MirrorPage } from './pages/Mirror.js'
@@ -30,6 +31,7 @@ export function App(): ReactElement {
   const [logoutArmed, setLogoutArmed] = useState(false)
 
   useEffect(() => {
+    initTheme()
     let active = true
     void (async () => {
       const response = await request<{ ok: boolean; loggedIn?: boolean; username?: string }>('auth/status', 'GET')
@@ -79,7 +81,7 @@ export function App(): ReactElement {
   else if (page === 'test') body = <TestRunnerPage state={state} test={test} />
   else if (page === 'mirror') body = <MirrorPage state={state} />
   else if (page === 'waiver') body = <WaiverPage state={state} />
-  else if (page === 'settings') body = <SettingsPage state={state} test={test} />
+  else if (page === 'settings') body = <SettingsPage />
   else body = <OverviewPage state={state} test={test} onNavigate={setPage} />
 
   return (
