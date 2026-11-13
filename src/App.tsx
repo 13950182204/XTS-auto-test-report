@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { request, useStatusPolling, type DeviceState, type RunState, type TestState } from './api.js'
 import { Bar, asRecord, clampPercent, num, str } from './components.js'
 import { initTheme } from './theme.js'
-import { DevicesPage } from './pages/Devices.js'
+import { TestBoxPage } from './pages/Devices.js'
 import { MaterialsPage } from './pages/Materials.js'
 import { TestRunnerPage } from './pages/TestRunner.js'
 import { MirrorPage } from './pages/Mirror.js'
@@ -15,7 +15,7 @@ type PageId = 'overview' | 'devices' | 'materials' | 'test' | 'mirror' | 'waiver
 
 const NAV: Array<{ id: PageId; label: string; icon: string }> = [
   { id: 'overview', label: '概览', icon: '◆' },
-  { id: 'devices', label: '设备连接', icon: '⇄' },
+  { id: 'devices', label: '测试盒子', icon: '⇄' },
   { id: 'materials', label: '评测资料', icon: '▤' },
   { id: 'test', label: 'XTS 自动测试', icon: '▶' },
   { id: 'mirror', label: '镜像固件上传', icon: '⬆' },
@@ -80,7 +80,7 @@ export function App(): ReactElement {
     : device.phase === 'pairing' ? '设备配网中' : ''
 
   let body: ReactElement
-  if (page === 'devices') body = <DevicesPage device={device} onNavigate={(target) => setPage(target)} />
+  if (page === 'devices') body = <TestBoxPage device={device} />
   else if (page === 'materials') body = <MaterialsPage state={state} test={test} reloadTick={0} />
   else if (page === 'test') body = <TestRunnerPage state={state} test={test} />
   else if (page === 'mirror') body = <MirrorPage state={state} />

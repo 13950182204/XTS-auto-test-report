@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { request, type RunState, type TestRound, type TestState } from '../api.js'
+import { request, type DeviceListResponse, type DeviceListItem, type RunState, type TestRound, type TestState } from '../api.js'
 import { Bar, Chip, Field, Panel, StatusLine, asArray, asRecord, clampPercent, formatEta, num, str, suiteLabel } from '../components.js'
 
-/** XTS 自动测试页：串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS。SN 与盒子在「设备连接」页管理。 */
+/** XTS 自动测试页：串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS。盒子在「测试盒子」页管理；被测设备从此页空闲列表多选。 */
 
 const TEST_SUITES = ['ssts', 'hats', 'dcts', 'acts'] as const
 
@@ -12,6 +12,9 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
   const [values, setValues] = useState<Values>({ testCasesPath: '', deviceSns: '', testBoxSn: '', workbookPath: '' })
   const [pageError, setPageError] = useState('')
   const [pageNote, setPageNote] = useState('')
+  const [idleDevices, setIdleDevices] = useState<DeviceListItem[]>([])
+  const [selectedDuts, setSelectedDuts] = useState<string[]>([])
+  const [listLoading, setListLoading] = useState(false)
   const { state, test } = props
 
   const hostRunning = state.phase !== 'idle'
@@ -31,15 +34,35 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
         testBoxSn: value.testBoxSn ?? '',
         workbookPath: value.workbookPath ?? '',
       }))
+      // 回显已选 DUT
+      const sns = (value.deviceSns ?? '').split(';').map((item) => item.trim()).filter(Boolean)
+      if (sns.length > 0) setSelectedDuts(sns)
     })()
     return () => { active = false }
   }, [])
 
+  function refreshIdle(): void {
+    setListLoading(true)
+    void (async () => {
+      const response = await request<DeviceListResponse>('device/list', 'GET')
+      setListLoading(false)
+      if (response.ok) setIdleDevices((response.devices ?? []).filter((item) => !item.busy))
+    })()
+  }
+
+  useEffect(() => { refreshIdle() }, [])
+
+  function toggleDut(sn: string): void {
+    setSelectedDuts((previous) => previous.includes(sn) ? previous.filter((item) => item !== sn) : [...previous, sn])
+  }
+
   async function start(): Promise<void> {
     setPageError(''); setPageNote('')
+    if (selectedDuts.length === 0) { setPageError('请先从空闲设备中点选至少一台被测设备。'); return }
     const response = await request<{ ok: boolean; message?: string; error?: string }>('test/start', 'POST', {
       testCasesPath: values.testCasesPath.trim(),
       workbookPath: values.workbookPath.trim(),
+      deviceSns: selectedDuts.join(';'),
     })
     if (!response.ok) setPageError(response.message || 'XTS 测试启动失败。')
     else setPageNote(response.message || 'XTS 测试已开始。')
@@ -86,10 +109,10 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
     <>
       <div className="page-head">
         <h1>XTS 自动测试</h1>
-        <p>串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS。SN 与盒子在「设备连接」页管理。</p>
+        <p>串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS。被测设备多选（空闲列表）；盒子在「测试盒子」页管理。</p>
       </div>
 
-      <Panel title="测试配置" meta="SN 与盒子在「设备连接」页设置">
+      <Panel title="测试配置" meta={`测试盒子 ${values.testBoxSn ? snShort(values.testBoxSn) : '未设置'}`}>
         <div className="grid">
           <Field id="t-testcases" label="测试用例路径" wide mono value={values.testCasesPath} placeholder="D:\ohos\XTS6.1\testcase"
             hint="xts-acts 套件根目录（含 ssts/ hats/ dcts/ acts/）"
@@ -99,17 +122,41 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
             hint="报告归档到 该目录\report\<套件>\report-n"
             onChange={(value) => setValues((v) => ({ ...v, workbookPath: value }))} />
         </div>
-        {values.deviceSns || values.testBoxSn ? (
-          <div className="row-top" style={{ gap: 14 }}>
-            <Chip tone="acts">{`盒子 ${snShort(values.testBoxSn)}`}</Chip>
-            <Chip tone="neutral">{`DUT ${values.deviceSns.split(';').map((item) => snShort(item.trim())).join(' · ')}`}</Chip>
+      </Panel>
+
+      <Panel title="被测设备" meta={`空闲 ${idleDevices.length} 台 · 可多选（HATS/ACTS 并行；SSTS/DCTS 单机自动取第一台）`}>
+        {listLoading ? (
+          <div className="dev-skeletons"><div className="sk" /><div className="sk" /><div className="sk" /></div>
+        ) : idleDevices.length > 0 ? (
+          <div className="picker">
+            {idleDevices.map((item) => (
+              <div className={`pick-item${selectedDuts.includes(item.sn) ? ' sel' : ''}`} key={item.sn}
+                onClick={() => toggleDut(item.sn)}>
+                <span className={`dot ${selectedDuts.includes(item.sn) ? 'dot--on' : 'dot--idle'}`} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="pick-title">{`设备 · ${item.type === 'network' ? '网络' : 'USB'}`}</div>
+                  <div className="pick-sub">{`${snShort(item.sn)}${item.ip ? ` · ${item.ip}` : ''}`}</div>
+                </div>
+                {selectedDuts.includes(item.sn) ? <span className="chip chip--sel">已选</span> : <span className="chip">空闲</span>}
+              </div>
+            ))}
           </div>
         ) : (
-          <p className="hint">请先在「设备连接」页连接盒子并选择被测设备。</p>
+          <p className="empty">当前没有空闲设备。请连接设备后点「刷新」。</p>
         )}
         <div className="actions">
-          <button className="btn btn--primary" disabled={hostRunning || testBusy} onClick={() => void start()}>{testBusy ? '测试中…' : '开始测试'}</button>
+          <button className="btn btn--small" disabled={listLoading} onClick={() => refreshIdle()}>{listLoading ? '刷新中…' : '刷新'}</button>
+          {selectedDuts.length > 0 ? <span className="muted" style={{ fontSize: 11.5 }}>{`已选 ${selectedDuts.length} 台`}</span> : null}
+        </div>
+      </Panel>
+
+      <Panel title="执行">
+        <div className="actions">
+          <button className="btn btn--primary" disabled={hostRunning || testBusy || selectedDuts.length === 0} onClick={() => void start()}>
+            {testBusy ? '测试中…' : '开始测试'}
+          </button>
           <button className="btn btn--danger" disabled={!testRunning} onClick={() => { void request('test/stop', 'POST') }}>停止测试</button>
+          {selectedDuts.length === 0 ? <span className="hint">请先点选被测设备</span> : null}
         </div>
       </Panel>
 
