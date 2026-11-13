@@ -1,7 +1,7 @@
 import http from 'node:http'
-import { existsSync, mkdirSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, win32 } from 'node:path'
+import { dirname, extname, join, normalize, win32 } from 'node:path'
 import { derivePaths } from './derive-paths.js'
 import { parseMirrorProgressLine, parseMirrorResultLine, type MirrorResult } from './mirror-progress.js'
 import {
@@ -497,7 +497,7 @@ async function finishMirrorRun(execution: Promise<{ code: number; output: string
 
 // —— 主服务 ——
 
-export async function startServer(userDataDir: string, log: (line: string) => void): Promise<{ port: number; close(): void }> {
+export async function startServer(userDataDir: string, rendererDir: string, log: (line: string) => void): Promise<{ port: number; close(): void }> {
   const store = new SettingsStore(defaultSettingsFilePath(userDataDir))
 
   function currentSettings(): Phase2Settings {
@@ -994,8 +994,46 @@ export async function startServer(userDataDir: string, log: (line: string) => vo
     [`${API_PREFIX}/test/probe`, handleTestProbe],
   ])
 
+  // 渲染进程静态文件托管（ES module 不能走 file://，会被 CORS 拦成黑屏）。
+  const MIME: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.ico': 'image/x-icon',
+    '.json': 'application/json; charset=utf-8',
+    '.woff2': 'font/woff2',
+  }
+  function serveRenderer(url: URL, res: http.ServerResponse): boolean {
+    if (!url.pathname.startsWith('/renderer/')) return false
+    const relative = url.pathname.slice('/renderer/'.length).replace(/^\/+/, '')
+    const file = normalize(join(rendererDir, relative || 'index.html'))
+    if (!file.startsWith(normalize(rendererDir))) {
+      sendJson(res, 403, { ok: false, error: '禁止访问。' })
+      return true
+    }
+    if (!existsSync(file) || !statSync(file).isFile()) {
+      // SPA 兜底：未知路径回 index.html。
+      const index = join(rendererDir, 'index.html')
+      if (!existsSync(index)) {
+        sendJson(res, 404, { ok: false, error: `渲染进程未构建：${rendererDir}` })
+        return true
+      }
+      res.setHeader('content-type', MIME['.html']!)
+      createReadStream(index).pipe(res)
+      return true
+    }
+    const type = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream'
+    res.setHeader('content-type', type)
+    createReadStream(file).pipe(res)
+    return true
+  }
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
+    if (serveRenderer(url, res)) return
     const handler = routes.get(url.pathname)
     if (!handler) {
       sendJson(res, 404, { ok: false, error: '接口不存在。' })
