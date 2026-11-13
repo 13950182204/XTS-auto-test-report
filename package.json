@@ -1,6 +1,6 @@
 {
   "name": "xts-reporter-app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenHarmony XTS 报告上传与自动测试 · 独立 Windows 桌面应用",
   "private": true,
   "type": "module",

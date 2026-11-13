@@ -976,9 +976,79 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
     return { execution, child: { pid: child.pid, killTree: () => killTree(child.pid) } }
   }
 
+/** 登录验证脚本（`scripts/login_check.mjs`）的结果行。 */
+const AUTH_PREFIX = 'AUTH_JSON='
+
+function parseAuthResult(output: string): { ok: boolean; username?: string; error?: string } | undefined {
+  for (const line of output.split(/\r?\n/).reverse()) {
+    const parsed = parseStructuredLine<{ ok: boolean; username?: string; error?: string }>(line, AUTH_PREFIX)
+    if (parsed) return parsed
+  }
+  return undefined
+}
+
+/**
+ * 登录状态：settings 里有账号密码即视为已登录（凭据是登录时真实验证过才落盘的）。
+ */
+async function handleAuthStatus(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只支持 GET。' })
+  const value = currentSettings()
+  const loggedIn = text(value.username) !== '' && text(value.password) !== ''
+  sendJson(res, 200, { ok: true, loggedIn, username: loggedIn ? text(value.username) : '' })
+}
+
+/**
+ * 登录：先存凭据，再用无头浏览器真实登录平台验证一次；失败回滚凭据（恢复旧值），
+ * 不把错密码留在设置里。纯验证用途，不写任何平台数据。
+ */
+async function handleAuthLogin(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
+  let artifactsDir = ''
+  try {
+    const body = await readBody(req)
+    const username = text(body.username)
+    const password = text(body.password)
+    if (!username || !password) return sendJson(res, 200, { ok: false, error: '请填写账号和密码。' })
+    const previous = currentSettings()
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '')
+    artifactsDir = join(tmpdir(), `oh-login-check-${stamp}`)
+    mkdirSync(artifactsDir, { recursive: true })
+    // 先落盘（后续任务要用），验证失败再回滚。
+    store.merge({ username, password })
+    updateState({ kind: 'phase2', phase: 'preflight', startedAt: new Date().toISOString(), finishedAt: undefined, ok: undefined, message: '正在登录平台验证账号…', errors: undefined, progress: { percent: 30, stage: '登录验证', detail: '正在用无头浏览器真实登录平台。' } })
+    const result = await runScript('login_check.mjs', ['--artifacts', artifactsDir], {
+      OH_USERNAME: username,
+      OH_PASSWORD: password,
+    }, [username, password], undefined, undefined, undefined, 2 * 60 * 1000)
+    const parsed = parseAuthResult(result.output)
+    const ok = result.code === 0 && parsed?.ok === true
+    updateState({ phase: 'idle', finishedAt: new Date().toISOString(), ok, message: ok ? '登录成功。' : (parsed?.error || `登录验证失败（脚本退出码 ${result.code}）。`), progress: { percent: 100, stage: ok ? '登录成功' : '登录失败', detail: ok ? `当前账号 ${username}` : (parsed?.error || '') } })
+    if (!ok) {
+      // 回滚凭据，避免错密码留在设置里。
+      store.merge({ username: text(previous.username), password: text(previous.password) })
+      return sendJson(res, 200, { ok: false, error: parsed?.error || `登录验证失败（脚本退出码 ${result.code}）。` })
+    }
+    sendJson(res, 200, { ok: true, username })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    sendJson(res, 200, { ok: false, error: `登录失败：${message}` })
+  }
+}
+
+/** 退出账号：只清凭据（username/password），设备目录/测试配置等业务设置保留。 */
+async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
+  store.merge({ username: '', password: '' })
+  log('已退出账号（凭据已清除，业务设置保留）')
+  sendJson(res, 200, { ok: true })
+}
+
   const routes = new Map<string, (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> | void>([
     [`${API_PREFIX}/status`, handleStatus],
     [`${API_PREFIX}/settings`, handleSettings],
+    [`${API_PREFIX}/auth/status`, handleAuthStatus],
+    [`${API_PREFIX}/auth/login`, handleAuthLogin],
+    [`${API_PREFIX}/auth/logout`, handleAuthLogout],
     [`${API_PREFIX}/paths/derive`, handlePathsDerive],
     [`${API_PREFIX}/preflight`, handlePreflight],
     [`${API_PREFIX}/save`, handleSave],

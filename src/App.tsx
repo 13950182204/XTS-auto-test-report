@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { useStatusPolling, type RunState, type TestState } from './api.js'
+import { request, useStatusPolling, type RunState, type TestState } from './api.js'
 import { Bar, asRecord, clampPercent, num, str } from './components.js'
 import { MaterialsPage } from './pages/Materials.js'
 import { TestRunnerPage } from './pages/TestRunner.js'
@@ -7,6 +7,7 @@ import { MirrorPage } from './pages/Mirror.js'
 import { WaiverPage } from './pages/Waiver.js'
 import { SettingsPage } from './pages/SettingsPage.js'
 import { OverviewPage } from './pages/Overview.js'
+import { LoginPage } from './pages/Login.js'
 
 type PageId = 'overview' | 'materials' | 'test' | 'mirror' | 'waiver' | 'settings'
 
@@ -19,11 +20,49 @@ const NAV: Array<{ id: PageId; label: string; icon: string }> = [
   { id: 'settings', label: '设置', icon: '⚙' },
 ]
 
+type Auth = { checked: boolean; loggedIn: boolean; username: string }
+
+/** 登录门：未登录只渲染登录页；已登录进主界面（侧边栏底部可退出账号）。 */
 export function App(): ReactElement {
+  const [auth, setAuth] = useState<Auth>({ checked: false, loggedIn: false, username: '' })
   const [page, setPage] = useState<PageId>('overview')
   const [status, setStatus] = useState<{ state: RunState; test: TestState }>({ state: { phase: 'idle' }, test: { phase: 'idle' } })
+  const [logoutArmed, setLogoutArmed] = useState(false)
 
-  useEffect(() => useStatusPolling((state, test) => setStatus({ state, test })), [])
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      const response = await request<{ ok: boolean; loggedIn?: boolean; username?: string }>('auth/status', 'GET')
+      if (active && response.ok) {
+        setAuth({ checked: true, loggedIn: response.loggedIn === true, username: response.username ?? '' })
+      }
+    })()
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    if (!auth.loggedIn) return undefined
+    return useStatusPolling((state, test) => setStatus({ state, test }))
+  }, [auth.loggedIn])
+
+  async function doLogout(): Promise<void> {
+    await request('auth/logout', 'POST')
+    setLogoutArmed(false)
+    setStatus({ state: { phase: 'idle' }, test: { phase: 'idle' } })
+    setAuth({ checked: true, loggedIn: false, username: '' })
+    setPage('overview')
+  }
+
+  if (!auth.checked) {
+    return (
+      <div className="login">
+        <p className="empty">正在启动…</p>
+      </div>
+    )
+  }
+  if (!auth.loggedIn) {
+    return <LoginPage onLoggedIn={(username) => setAuth({ checked: true, loggedIn: true, username })} />
+  }
 
   const { state, test } = status
   const running = state.phase !== 'idle' || test.phase === 'running' || test.phase === 'stopping'
@@ -59,8 +98,17 @@ export function App(): ReactElement {
           ))}
         </nav>
         <div className="sidebar__foot">
+          <span className="sidebar__account">{`账号 ${auth.username || '（未设置）'}`}</span>
+          {logoutArmed ? (
+            <div className="row-actions">
+              <button className="btn btn--small btn--danger" onClick={() => void doLogout()}>确认退出</button>
+              <button className="btn btn--small" onClick={() => setLogoutArmed(false)}>取消</button>
+            </div>
+          ) : (
+            <button className="btn btn--small" onClick={() => setLogoutArmed(true)}>退出账号</button>
+          )}
           <span>{`本地任务 ${state.phase === 'idle' && test.phase === 'idle' ? '空闲' : '执行中'}`}</span>
-          <span>v0.1.0 · 数据不出本机（除平台上传）</span>
+          <span>v0.2.0 · 数据不出本机（除平台上传）</span>
         </div>
       </aside>
       <main className="content">

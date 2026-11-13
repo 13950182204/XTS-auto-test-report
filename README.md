@@ -17,6 +17,10 @@ npm run build      # 仅构建（渲染进程 vite + 主进程 tsc）
 
 前置：`python`（装好 xdevice，XTS 自动测试用）、`hdc` 在 PATH；测试样机与测试盒子经 hdc 连接本机。
 
+## 登录
+
+启动即见登录页：填**兼容性测评平台账号密码**，应用会用无头浏览器真实登录平台验证一次（密码错误当场报错，不会存错凭据），通过后进入主界面。侧边栏底部「退出账号」只清凭据（设备目录/测试配置保留），换平台账号提交时用。
+
 ## 架构
 
 - **主进程**（`electron/`）：Electron 窗口 + `127.0.0.1` 随机端口本地 API 服务；数据面从插件 `phase2-routes.ts` 1:1 移植（RunState/testState 状态机、后台长任务、行协议解析）。脚本 spawn 用 `ELECTRON_RUN_AS_NODE=1`，无需单独装 Node。

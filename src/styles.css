@@ -129,3 +129,14 @@ textarea.input{min-height:86px;resize:vertical;line-height:1.7}
 .row-actions{margin-left:auto;display:inline-flex;gap:6px;flex:none}
 @media (max-width:900px){.app{grid-template-columns:1fr}.sidebar{position:static;height:auto;flex-direction:row;align-items:center;padding:10px 14px}.sidebar__brand{border:0;padding:0;margin:0}.sidebar__nav{display:flex;flex:1}.sidebar__foot{display:none}.content{padding:18px 16px 40px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+.sidebar__account{font-size:12px;color:var(--text-2);overflow-wrap:anywhere}
+.sidebar__foot .row-actions{margin-left:0}
+/* ===== 登录页 ===== */
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:
+  radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb,var(--primary) 14%,transparent), transparent),
+  var(--bg)}
+.login__card{width:420px;max-width:100%;display:grid;gap:14px;padding:26px 28px;border:1px solid var(--border-soft);border-radius:12px;background:var(--bg-2)}
+.login__brand{display:flex;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border-soft)}
+.login__brand-name{display:grid;gap:2px}
+.login__brand-name b{font-size:15px}
+.login__brand-name span{font-size:11.5px;color:var(--text-3)}
