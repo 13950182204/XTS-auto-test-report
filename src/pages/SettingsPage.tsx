@@ -6,10 +6,10 @@ import { Field, Panel, StatusLine } from '../components.js'
 
 const FIELDS: Array<{ id: string; label: string; hint?: string; mono?: boolean; wide?: boolean; type?: string }> = [
   { id: 'username', label: '平台账号' },
-  { id: 'password', label: '平台密码', type: 'password', hint: '已保存则留空沿用；输入新值即覆盖。' },
+  { id: 'password', label: '平台密码', type: 'password', hint: '留空沿用已保存密码' },
   { id: 'workbookPath', label: '设备目录（或批量父目录）', mono: true, wide: true },
-  { id: 'testCasesPath', label: '测试用例路径（XTS 自动测试）', mono: true, wide: true, hint: 'xts-acts 套件根目录，默认 D:\\ohos\\XTS6.1\\testcase。' },
-  { id: 'testBoxSn', label: '测试盒子 SN（DCTS 必需）', mono: true, wide: true, hint: '盒子经 hdc 连接本机；默认 370100654d4d43202010000071dd7b00。' },
+  { id: 'testCasesPath', label: '测试用例路径（XTS 自动测试）', mono: true, wide: true, hint: '默认 D:\\ohos\\XTS6.1\\testcase' },
+  { id: 'testBoxSn', label: '测试盒子 SN（DCTS 必需）', mono: true, wide: true, hint: '默认 370100654d4d43202010000071dd7b00' },
   { id: 'mirrorPath', label: '固件包路径（默认值）', mono: true, wide: true },
   { id: 'contactPhone', label: '企业联系电话' },
   { id: 'contactEmail', label: '企业邮箱' },

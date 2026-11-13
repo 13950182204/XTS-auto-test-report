@@ -69,7 +69,7 @@ export function WaiverPage(props: { state: RunState }): ReactElement {
         <div className="grid">
           <Field id="w-assessment" label="测评编号（豁免）" value={waiverAssessmentNumber} placeholder="例如 OHC007500008641" disabled={busy} onChange={(value) => setWaiverAssessmentNumber(value)} />
           <Field id="w-path" label="豁免资料路径" wide value={waiverPath} placeholder="目录或单个 .txt，例如 D:\ohos\XTS6.1\CDOHong\CDO-RK3568\exemption"
-            hint="Acts / ActsValidator / Hats / Dcts / Ssts 目录；附件优先 .zip，缺失用 .txt。"
+            hint="Acts / ActsValidator / Hats / Dcts / Ssts 目录"
             disabled={busy} onChange={(value) => setWaiverPath(value)} />
         </div>
         <div className="actions">
@@ -77,7 +77,6 @@ export function WaiverPage(props: { state: RunState }): ReactElement {
           <button className="btn" disabled={busy} onClick={() => void run('waiver/preflight')}>豁免资料预检</button>
           <button className="btn btn--primary" disabled={busy} onClick={() => void run('waiver/save')}>{hostRunning && isWaiver ? '处理中…' : '保存豁免草稿'}</button>
         </div>
-        <p className="note">任一条失败即停；「保存豁免草稿」只保存草稿，不点「申请豁免/提交/确认提交」，也不调用 /exempt/submit。</p>
       </Panel>
 
       {scan ? (

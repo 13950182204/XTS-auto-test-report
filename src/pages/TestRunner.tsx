@@ -130,19 +130,19 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
       <Panel title="测试配置" meta="测试样机提前连接并保持 hdc 在线">
         <div className="grid">
           <Field id="t-testcases" label="测试用例路径" wide mono value={values.testCasesPath} placeholder="D:\ohos\XTS6.1\testcase"
-            hint="xts-acts 套件根目录（下含 ssts/ hats/ dcts/ acts/）；将按方案自动匹配同级「标准最小测试集_无屏 / 有屏」清单。"
+            hint="xts-acts 套件根目录（含 ssts/ hats/ dcts/ acts/）"
             onChange={(value) => setValues((v) => ({ ...v, testCasesPath: value }))} />
           <Field id="t-sns" label="被测设备 SN（每行一台样机）" wide textarea value={values.deviceSns}
             placeholder={'150100424a4e4234520765512902898d\n150100424a4e42345207653128028981'}
-            hint="HATS / ACTS 套件内多设备并行；也接受分号/逗号分隔，保存时自动规整。"
+            hint="HATS / ACTS 多设备并行；也接受分号/逗号分隔"
             onChange={(value) => setValues((v) => ({ ...v, deviceSns: value }))} />
           <Field id="t-box" label="测试盒子 SN（DCTS 必需）" wide mono value={values.testBoxSn}
             placeholder="370100654d4d43202010000071dd7b00"
-            hint="盒子经 hdc 连接本机（不是被测设备 SN）；盒子 IP 自动从盒子读取用于 ping 与同网段检查。未填或预检不过（超时 5 分钟）时跳过 DCTS 并提醒。"
+            hint="盒子经 hdc 连接本机，不是被测设备 SN"
             onChange={(value) => setValues((v) => ({ ...v, testBoxSn: value }))} />
           <Field id="t-workbook" label="设备目录（报告归档根）" wide mono value={values.workbookPath}
             placeholder="D:\ohos\XTS6.1\CDOHong\CDO-RK3568"
-            hint="每轮报告完整归档到 该目录\report\<套件>\report-1、report-2 … 递增不覆盖。"
+            hint="报告归档到 该目录\report\<套件>\report-n"
             onChange={(value) => setValues((v) => ({ ...v, workbookPath: value }))} />
         </div>
         <div className="actions">
@@ -262,7 +262,6 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
       {pageError ? <StatusLine tone="error">{pageError}</StatusLine> : null}
       {pageNote ? <StatusLine tone="ok">{pageNote}</StatusLine> : null}
       {test.message && !testBusy ? <StatusLine tone={test.ok === false ? 'error' : 'ok'}>{str(test.message)}</StatusLine> : null}
-      <p className="note">测试直接调用 python -m xdevice（跳过 run.bat 的 pip 重装）；关闭应用会终止进行中的测试，已归档轮次保留；测试期间其它页面仍可用。</p>
     </>
   )
 }

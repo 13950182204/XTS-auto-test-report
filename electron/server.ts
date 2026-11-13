@@ -27,6 +27,7 @@ import {
   type ProgressState,
 } from './script-runner.js'
 import { defaultSettingsFilePath, SettingsStore, settingsView, type Phase2Settings } from './settings-store.js'
+import { CredentialVault } from './vault.js'
 
 /**
  * 本地 API 服务（数据面 1:1 移植自插件 phase2-routes.ts + test 路由）：
@@ -499,6 +500,7 @@ async function finishMirrorRun(execution: Promise<{ code: number; output: string
 
 export async function startServer(userDataDir: string, rendererDir: string, log: (line: string) => void): Promise<{ port: number; close(): void }> {
   const store = new SettingsStore(defaultSettingsFilePath(userDataDir))
+  const vault = new CredentialVault(userDataDir)
 
   function currentSettings(): Phase2Settings {
     return store.read()
@@ -998,8 +1000,10 @@ async function handleAuthStatus(req: http.IncomingMessage, res: http.ServerRespo
 }
 
 /**
- * 登录：先存凭据，再用无头浏览器真实登录平台验证一次；失败回滚凭据（恢复旧值），
+ * 登录：凭据优先取保险库（勾选记住过的账号可不输密码），否则用表单输入；
+ * 先存 settings，再用无头浏览器真实登录平台验证一次；失败回滚凭据（恢复旧值），
  * 不把错密码留在设置里。纯验证用途，不写任何平台数据。
+ * remember 默认 true：验证通过后把账号密码加密存入保险库，供下次下拉选择。
  */
 async function handleAuthLogin(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
@@ -1007,8 +1011,14 @@ async function handleAuthLogin(req: http.IncomingMessage, res: http.ServerRespon
   try {
     const body = await readBody(req)
     const username = text(body.username)
-    const password = text(body.password)
-    if (!username || !password) return sendJson(res, 200, { ok: false, error: '请填写账号和密码。' })
+    const remember = body.remember !== false
+    let password = text(body.password)
+    if (!username) return sendJson(res, 200, { ok: false, error: '请填写账号。' })
+    if (!password) {
+      // 密码留空 = 用保险库里该账号记住的密码（账号下拉选择的场景）。
+      password = vault.decryptPassword(username) ?? ''
+      if (!password) return sendJson(res, 200, { ok: false, error: '请填写密码（该账号没有记住的密码）。' })
+    }
     const previous = currentSettings()
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '')
     artifactsDir = join(tmpdir(), `oh-login-check-${stamp}`)
@@ -1028,11 +1038,34 @@ async function handleAuthLogin(req: http.IncomingMessage, res: http.ServerRespon
       store.merge({ username: text(previous.username), password: text(previous.password) })
       return sendJson(res, 200, { ok: false, error: parsed?.error || `登录验证失败（脚本退出码 ${result.code}）。` })
     }
+    if (remember && vault.available()) {
+      try {
+        vault.remember(username, password)
+      } catch (error) {
+        log(`记住密码失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     sendJson(res, 200, { ok: true, username })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     sendJson(res, 200, { ok: false, error: `登录失败：${message}` })
   }
+}
+
+/** 已记住的账号清单（不含密码材料）。 */
+async function handleAuthAccounts(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只支持 GET。' })
+  sendJson(res, 200, { ok: true, accounts: vault.list() })
+}
+
+/** 从保险库删除指定账号。 */
+async function handleAuthAccountsDelete(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
+  const body = await readBody(req)
+  const username = text(body.username)
+  if (!username) return sendJson(res, 200, { ok: false, error: '没有提供要删除的账号。' })
+  vault.forget(username)
+  sendJson(res, 200, { ok: true, accounts: vault.list() })
 }
 
 /** 退出账号：只清凭据（username/password），设备目录/测试配置等业务设置保留。 */
@@ -1049,6 +1082,8 @@ async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerRespo
     [`${API_PREFIX}/auth/status`, handleAuthStatus],
     [`${API_PREFIX}/auth/login`, handleAuthLogin],
     [`${API_PREFIX}/auth/logout`, handleAuthLogout],
+    [`${API_PREFIX}/auth/accounts`, handleAuthAccounts],
+    [`${API_PREFIX}/auth/accounts/delete`, handleAuthAccountsDelete],
     [`${API_PREFIX}/paths/derive`, handlePathsDerive],
     [`${API_PREFIX}/preflight`, handlePreflight],
     [`${API_PREFIX}/save`, handleSave],

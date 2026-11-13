@@ -57,14 +57,13 @@ export function MirrorPage(props: { state: RunState }): ReactElement {
       <Panel title="固件包">
         <div className="grid">
           <Field id="mi-path" label="固件包路径" wide value={mirrorPath} placeholder="单个 .zip / .7z，或包含固件包的目录"
-            hint="支持 .zip / .7z（也接受 tar 系列）；文件名只用中文、英文、数字、空格 _ - . ( )。"
+            hint="支持 .zip / .7z / tar"
             disabled={busy} onChange={(value) => setMirrorPath(value)} />
         </div>
         <div className="actions">
           <button className="btn" disabled={busy} onClick={() => void run(true)}>校验固件</button>
           <button className="btn btn--primary" disabled={busy} onClick={() => void run(false)}>{running ? '上传中…' : '上传固件'}</button>
         </div>
-        <p className="note">评测资料预检通过后会自动开始上传固件；平台已有同名固件时自动跳过；只上传文件，不删改任何镜像。{hasPassword ? '' : '（真实上传需要已保存账号密码）'}</p>
       </Panel>
 
       {isMirror ? (

@@ -165,7 +165,7 @@ export function MaterialsPage(props: { state: RunState; test: TestState; reloadT
           <Field id="m-username" label="账号" value={values.username} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, username: value }))} />
           <Field id="m-password" label="密码" type="password" value={values.password} placeholder={hasPassword ? '已保存密码，留空则沿用' : '未保存密码'} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, password: value }))} />
           <Field id="m-workbook" label="设备目录（或批量父目录）" wide value={values.workbookPath} placeholder="目录路径，例如 D:\ohos\XTS6.1\CDOHong\CDO-RK3568"
-            hint={deriveHint || '只填目录：工作簿按目录下的 OpenHarmony兼容性申请资料.xlsx 自动识别，并带出豁免资料路径与固件包路径。'}
+            hint={deriveHint || '只填目录，自动识别工作簿并带出路径'}
             disabled={busy} onChange={(value) => setValues((v) => ({ ...v, workbookPath: value }))} />
           <Field id="m-phone" label="企业联系电话" value={values.contactPhone} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, contactPhone: value }))} />
           <Field id="m-email" label="企业邮箱" value={values.contactEmail} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, contactEmail: value }))} />
@@ -217,9 +217,7 @@ export function MaterialsPage(props: { state: RunState; test: TestState; reloadT
           )}
         {unbindError ? <StatusLine tone="error">{unbindError}</StatusLine> : null}
         {verifyNote ? <StatusLine tone="ok">{verifyNote}</StatusLine> : null}
-        {draftItems.length > 0 ? (
-          <p className="note">点「评测资料提交」会继续这条申请，不会重新建一条；「解除关联」只清掉本机工作簿里的申请标识/测评编号（平台上的旧申请不动），下次提交将新建一条；「平台核验」登录平台核对真实状态并回写。</p>
-        ) : null}
+
       </Panel>
 
       {percent !== undefined ? (
@@ -258,7 +256,6 @@ export function MaterialsPage(props: { state: RunState; test: TestState; reloadT
       ) : null}
 
       {messages ? <StatusLine tone={state.ok === false || pageError ? 'error' : 'ok'}>{messages}</StatusLine> : null}
-      {hostRunning ? <p className="note">任务进行中，进度实时刷新；可以切到其它页查看，不要关闭应用。</p> : null}
     </>
   )
 }

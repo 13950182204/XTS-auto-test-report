@@ -108,7 +108,6 @@ export function App(): ReactElement {
             <button className="btn btn--small" onClick={() => setLogoutArmed(true)}>退出账号</button>
           )}
           <span>{`本地任务 ${state.phase === 'idle' && test.phase === 'idle' ? '空闲' : '执行中'}`}</span>
-          <span>v0.2.0 · 数据不出本机（除平台上传）</span>
         </div>
       </aside>
       <main className="content">
