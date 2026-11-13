@@ -1,0 +1,1142 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { newestMtimeMs, packDirectoryToZip } from './report_archive.mjs';
+import { fileURLToPath } from 'node:url';
+
+export const DEFAULT_WORKBOOK_PATH = 'D:\\ohos\\XTS6.1\\OpenHarmony兼容性申请资料.xlsx';
+export const SHEETS = Object.freeze({
+  board: '模组开发板',
+  release: '发行版',
+  commercial: '商用设备',
+});
+export const SHEET_ORDER = Object.freeze([SHEETS.board, SHEETS.release, SHEETS.commercial]);
+export const SAFE_SAVE_LABELS = new Set(['保存']);
+export const PUBLICITY_VALUES = Object.freeze(['发证即公示', '选择最早公示时间', '不公示']);
+export const INSTALL_VALUES = Object.freeze(['支持应用安装', '不支持应用安装']);
+export const SCREEN_VALUES = Object.freeze(['带屏', '不带屏']);
+export const AUTH_VALUES = Object.freeze(['产线预置', '一型一密', '不涉及']);
+// 平台第 2 步「内核」字典 itemType=system_kernel。
+export const KERNEL_VALUES = Object.freeze(['LiteOS-M', 'LiteOS-A', 'Linux']);
+
+const STATUS_CELLS = Object.freeze({
+  status: 'B3',
+  applicationId: 'F3',
+  assessmentNumber: 'B4',
+  processedAt: 'F4',
+  notes: 'B5',
+});
+
+// cell 行号是「新模板」的坐标；读取一律按标签定位（见 valuesFromFormSheet），
+// 所以旧模板（没有「内核」「快递单号」两行）仍能读，迁移脚本负责补成新布局。
+const BOARD_FIELDS = Object.freeze([
+  ['systemType', '操作系统类型', 'C8'],
+  ['osVersion', '操作系统版本号', 'C9'],
+  ['systemKernel', '内核', 'C10'],
+  ['name', '模组/开发板名称(传播名)', 'C11'],
+  ['moduleModel', '模组/开发板型号', 'C12'],
+  ['chipModel', '芯片型号', 'C13'],
+  ['cpuArchitecture', 'CPU架构', 'C14'],
+  ['supportsInstall', '是否支持应用安装', 'C15'],
+  ['withScreen', '是否带屏', 'C16'],
+  ['description', '基本信息描述', 'C17'],
+  ['publicity', '是否允许公示', 'C18'],
+  ['publicizeDate', '最早公示日期', 'C19'],
+  ['softwareVersion', '软件版本号', 'C21'],
+  ['securityPatch', '安全补丁标签', 'C22'],
+  ['versionId', '版本Id', 'C23'],
+  ['versionHash', '版本Hash', 'C24'],
+  ['expressOrderNo', '快递单号', 'C26'],
+]);
+
+const COMMERCIAL_FIELDS = Object.freeze([
+  ['systemType', '操作系统类型', 'C8'],
+  ['osVersion', '操作系统版本号', 'C9'],
+  ['systemKernel', '内核', 'C10'],
+  ['name', '设备名称(传播名)', 'C11'],
+  ['category', '设备类型', 'C12'],
+  ['deviceModel', '设备型号', 'C13'],
+  ['hardwareVersion', '硬件设备版本号', 'C14'],
+  ['brandName', '品牌', 'C15'],
+  ['brandNameEn', '品牌英文名', 'C16'],
+  ['moduleModel', '模组型号', 'C17'],
+  ['chipModel', '芯片型号', 'C18'],
+  ['cpuArchitecture', 'CPU架构', 'C19'],
+  ['authType', '认证方式', 'C20'],
+  ['supportsInstall', '是否支持应用安装', 'C21'],
+  ['withScreen', '是否带屏', 'C22'],
+  ['description', '基本信息描述', 'C23'],
+  ['publicity', '是否允许公示', 'C24'],
+  ['publicizeDate', '最早公示日期', 'C25'],
+  ['softwareVersion', '软件版本号', 'C27'],
+  ['securityPatch', '安全补丁标签', 'C28'],
+  ['versionId', '版本Id', 'C29'],
+  ['versionHash', '版本Hash', 'C30'],
+  ['expressOrderNo', '快递单号', 'C32'],
+]);
+
+const RELEASE_FIELDS = Object.freeze([
+  ['systemType', '操作系统类型', 'C8'],
+  ['osVersion', '操作系统版本号', 'C9'],
+  ['systemKernel', '内核', 'C10'],
+  ['name', '发行版名称(传播名)', 'C11'],
+  ['description', '基本信息描述', 'C12'],
+  ['publicity', '是否允许公示', 'C13'],
+  ['publicizeDate', '最早公示日期', 'C14'],
+  ['device1ModuleModel', '设备1模组型号', 'B17'],
+  ['device2ModuleModel', '设备2模组型号', 'F17'],
+  ['device1ChipModel', '设备1芯片型号', 'B18'],
+  ['device2ChipModel', '设备2芯片型号', 'F18'],
+  ['device1CpuArchitecture', '设备1CPU架构', 'B19'],
+  ['device2CpuArchitecture', '设备2CPU架构', 'F19'],
+  ['device1SupportsInstall', '设备1是否支持应用安装', 'B20'],
+  ['device2SupportsInstall', '设备2是否支持应用安装', 'F20'],
+  ['device1WithScreen', '设备1是否带屏', 'B21'],
+  ['device2WithScreen', '设备2是否带屏', 'F21'],
+  ['softwareVersion', '软件版本号', 'C24'],
+  ['securityPatch', '安全补丁标签', 'C25'],
+  ['device1VersionId', '设备1版本Id', 'B27'],
+  ['device2VersionId', '设备2版本Id', 'F27'],
+  ['device1VersionHash', '设备1版本Hash', 'B28'],
+  ['device2VersionHash', '设备2版本Hash', 'F28'],
+  ['expressOrderNo', '快递单号', 'C30'],
+]);
+
+const FIELD_LAYOUTS = Object.freeze({
+  [SHEETS.board]: BOARD_FIELDS,
+  [SHEETS.release]: RELEASE_FIELDS,
+  [SHEETS.commercial]: COMMERCIAL_FIELDS,
+});
+
+const LEGACY_HEADERS = Object.freeze({
+  [SHEETS.board]: [
+    '测评编号', '操作系统类型', '操作系统版本号', '模组/开发板名称(传播名)', '模组/开发板型号',
+    '芯片型号', 'CPU架构', '是否支持应用安装', '是否带屏', '基本信息描述',
+    '是否允许公示', '最早公示日期', '软件版本号', '安全补丁标签', '版本Id', '版本Hash',
+  ],
+  [SHEETS.commercial]: [
+    '测评编号', '操作系统类型', '操作系统版本号', '设备名称(传播名)', '设备类型', '设备型号',
+    '硬件设备版本号', '品牌', '品牌英文名', '模组型号', '芯片型号', 'CPU架构', '认证方式',
+    '是否支持应用安装', '是否带屏', '基本信息描述', '是否允许公示', '最早公示日期',
+    '软件版本号', '安全补丁标签', '版本Id', '版本Hash',
+  ],
+  [SHEETS.release]: [
+    '测评编号', '操作系统类型', '操作系统版本号', '发行版名称(传播名)', '基本信息描述',
+    '是否允许公示', '最早公示日期', '软件版本号', '安全补丁标签',
+    '设备1模组型号', '设备1芯片型号', '设备1CPU架构', '设备1是否支持应用安装', '设备1是否带屏',
+    '设备1版本Id', '设备1版本Hash',
+    '设备2模组型号', '设备2芯片型号', '设备2CPU架构', '设备2是否支持应用安装', '设备2是否带屏',
+    '设备2版本Id', '设备2版本Hash',
+  ],
+});
+
+export class WorkbookValidationError extends Error {
+  constructor(errors) {
+    super(errors.join('\n'));
+    this.code = 'WORKBOOK_VALIDATION_FAILED';
+    this.errors = errors;
+  }
+}
+
+/**
+ * 把安全补丁标签统一成平台展示/回传的 `YYYY/MM/DD`。
+ * 平台第 3 步回读是 `2026/11/01` 这种带前导零的斜杠格式，工作簿里手填的
+ * `2026-11-1`、`2026.11.01`、`20261101` 都归一到这里，避免「安全补丁标签」被误判成不一致。
+ */
+export function normalizePatchDate(value) {
+  const text = normalizeText(value);
+  if (!text) return '';
+  const separated = /^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?$/.exec(text);
+  if (separated) {
+    return `${separated[1]}/${separated[2].padStart(2, '0')}/${separated[3].padStart(2, '0')}`;
+  }
+  const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(text);
+  if (compact) return `${compact[1]}/${compact[2]}/${compact[3]}`;
+  return text;
+}
+
+export function normalizeText(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+export function normalizeComparable(value) {
+  return normalizeText(value).replace(/\s/g, '').toLowerCase();
+}
+
+export function isSafeSaveLabel(label) {
+  return SAFE_SAVE_LABELS.has(normalizeText(label));
+}
+
+export function assertOnlySafeSaveLabels(labels) {
+  if (!Array.isArray(labels) || labels.length !== 1 || !isSafeSaveLabel(labels[0])) {
+    throw new Error('保存控件语义不安全，已停止执行。');
+  }
+}
+
+/**
+ * 把用户填写的路径归一化成**当前宿主进程能直接打开**的形式。
+ *
+ * 本插件有两种宿主，路径语义相反，写死任何一种都会在另一种上静默全废
+ * （表现为 ENOENT / 读到不存在的目录）：
+ * - WSL 侧 `dsh web`：脚本跑在 Linux，`D:\ohos\x` 必须变成 `/mnt/d/ohos/x`；
+ * - DSH Desktop：脚本跑在 Windows（Electron 的 node 模式），`/mnt/d/ohos/x`
+ *   必须变回 `D:/ohos/x`，而 `D:\ohos\x` 保持 Windows 形式（正斜杠在 Node 的
+ *   Windows 实现里等价）。
+ *
+ * 判据是 `process.platform`，不是输入长什么样——同一个输入串在两种宿主下要求
+ * 不同的结果。`platform` 参数只为测试可注入（两种宿主无法在同一台机器上跑）。
+ */
+export function toHostPath(value, platform = process.platform) {
+  const input = normalizeText(value).replaceAll('\\', '/');
+  const windowsDrive = /^([a-zA-Z]):\/(.*)$/.exec(input);
+  const wslMount = /^\/mnt\/([a-zA-Z])\/(.*)$/.exec(input);
+  if (platform === 'win32') {
+    return wslMount ? `${wslMount[1].toUpperCase()}:/${wslMount[2]}` : input;
+  }
+  return windowsDrive ? `/mnt/${windowsDrive[1].toLowerCase()}/${windowsDrive[2]}` : input;
+}
+
+function workbookLockPath(sourcePath) {
+  return path.join(path.dirname(sourcePath), `~$${path.basename(sourcePath)}`);
+}
+
+export async function ensureWorkbookWritable(workbookPath, { attempts = 15, intervalMs = 1000, onRetry } = {}) {
+  const sourcePath = toHostPath(workbookPath);
+  let lastError;
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    let handle;
+    try {
+      handle = await fs.open(sourcePath, 'r+');
+      return sourcePath;
+    } catch (error) {
+      lastError = error;
+      if (!['EACCES', 'EPERM', 'EBUSY'].includes(error?.code)) throw error;
+      if (attempt >= attempts) break;
+      const lockPath = workbookLockPath(sourcePath);
+      const lockPresent = await fs.access(lockPath).then(() => true).catch(() => false);
+      onRetry?.({ attempt: attempt + 1, lockPresent, lockPath, error });
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+  }
+  const lockPath = workbookLockPath(sourcePath);
+  const lockPresent = await fs.access(lockPath).then(() => true).catch(() => false);
+  const reason = lockPresent
+    ? `检测到 WPS/Excel 锁定文件 ${lockPath}。`
+    : '文件可能被 WPS/Excel 占用或当前账号没有写权限。请关闭占用该工作簿的程序后重试。';
+  const error = new Error(`工作簿不可写：${sourcePath}。${reason}`);
+  error.code = 'WORKBOOK_NOT_WRITABLE';
+  error.cause = lastError;
+  throw error;
+}
+
+export const PHASE2_SELF_CHECK_NAME = 'OpenHarmony设备兼容性规范5.x自检表_标准系统.xlsx';
+export const PHASE2_REPORT_NAME = 'report.zip';
+export const PHASE2_WORKBOOK_NAME = 'OpenHarmony兼容性申请资料.xlsx';
+
+function isGeneratedPhase2Directory(name) {
+  return name.startsWith('OpenHarmony兼容性申请_第二阶段_结果_') || name.startsWith('OpenHarmony兼容性批量结果_');
+}
+
+export async function discoverPhase2Workbooks(inputPath) {
+  const sourcePath = toHostPath(inputPath);
+  if (!isAbsoluteLocalPath(sourcePath)) {
+    throw new WorkbookValidationError(['批量目录或工作簿路径必须为绝对路径。']);
+  }
+  let sourceStat;
+  try {
+    sourceStat = await fs.stat(sourcePath);
+  } catch {
+    throw new WorkbookValidationError([`批量目录或工作簿不存在: ${sourcePath}`]);
+  }
+  if (sourceStat.isFile()) {
+    if (path.basename(sourcePath) !== PHASE2_WORKBOOK_NAME || path.extname(sourcePath).toLowerCase() !== '.xlsx') {
+      throw new WorkbookValidationError([`工作簿文件名必须为 ${PHASE2_WORKBOOK_NAME}。`]);
+    }
+    return {
+      mode: 'single',
+      rootPath: path.dirname(sourcePath),
+      items: [{ directory: path.dirname(sourcePath), workbookPath: sourcePath, name: path.basename(path.dirname(sourcePath)) }],
+      skipped: [],
+    };
+  }
+  if (!sourceStat.isDirectory()) {
+    throw new WorkbookValidationError([`输入路径既不是目录也不是 .xlsx 工作簿: ${sourcePath}`]);
+  }
+  // 设置页那一行填的是**目录**（设备目录或批量父目录），不是工作簿文件：
+  // 目录里直接有 `OpenHarmony兼容性申请资料.xlsx` 时按单条处理，否则把它当批量父目录扫一级子目录。
+  const rootWorkbook = path.join(sourcePath, PHASE2_WORKBOOK_NAME);
+  const rootWorkbookExists = await fs.stat(rootWorkbook).then((stat) => stat.isFile()).catch(() => false);
+  if (rootWorkbookExists) {
+    return {
+      mode: 'single',
+      rootPath: sourcePath,
+      items: [{ directory: sourcePath, workbookPath: rootWorkbook, name: path.basename(sourcePath) }],
+      skipped: [],
+    };
+  }
+  const entries = await fs.readdir(sourcePath, { withFileTypes: true });
+  const directories = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !isGeneratedPhase2Directory(entry.name)).sort((left, right) => left.name.localeCompare(right.name));
+  const items = [];
+  const skipped = [];
+  for (const entry of directories) {
+    const directory = path.join(sourcePath, entry.name);
+    const workbookPath = path.join(directory, PHASE2_WORKBOOK_NAME);
+    const exists = await fs.stat(workbookPath).then((stat) => stat.isFile()).catch(() => false);
+    if (exists) {
+      items.push({ directory, workbookPath, name: entry.name });
+    } else {
+      skipped.push({ directory, name: entry.name, reason: `未找到 ${PHASE2_WORKBOOK_NAME}` });
+    }
+  }
+  return { mode: 'batch', rootPath: sourcePath, items, skipped };
+}
+
+const SELF_CHECK_PATTERN = /^OpenHarmony设备兼容性规范(.+?)自检表_标准系统\.xlsx$/i;
+
+function selfCheckRank(name) {
+  const match = SELF_CHECK_PATTERN.exec(name);
+  if (!match) return -1;
+  return Number.parseFloat(match[1]) || 0;
+}
+
+async function pickSelfCheckPath(directory, joinPath) {
+  const files = await readDirectoryFiles(directory);
+  const candidates = files.filter((name) => !name.startsWith('~$') && SELF_CHECK_PATTERN.test(name));
+  const stats = [];
+  for (const name of candidates) {
+    const info = await fs.stat(joinPath(directory, name)).catch(() => null);
+    stats.push({ name, rank: selfCheckRank(name), mtime: info?.mtimeMs ?? 0 });
+  }
+  stats.sort((left, right) => right.rank - left.rank || right.mtime - left.mtime);
+  return stats.length ? joinPath(directory, stats[0].name) : '';
+}
+
+async function pickReportZipPath(directory, joinPath) {
+  const reportDir = joinPath(directory, 'report');
+  const inReport = (await readDirectoryFiles(reportDir)).filter((name) => /\.zip$/i.test(name));
+  if (inReport.includes(PHASE2_REPORT_NAME)) return joinPath(reportDir, PHASE2_REPORT_NAME);
+  if (inReport.length) return joinPath(reportDir, inReport.sort()[0]);
+  const inRoot = (await readDirectoryFiles(directory)).filter((name) => /^report.*\.zip$/i.test(name));
+  return inRoot.length ? joinPath(directory, inRoot.sort()[0]) : '';
+}
+
+/**
+ * 自检表与 XTS 报告也按「工作簿所在目录」自动定位：优先精确文件名，
+ * 找不到时退化为目录扫描（自检表按 6.x > 5.x、mtime 新者优先；报告优先 report/ 下的 zip）。
+ */
+/**
+ * report/ 目录是解压后的产物时，平台只收 zip：这里在预检前把目录打成
+ * report/report.zip。已存在且比目录内任何文件都新时不重复打包（省时间）；
+ * 目录里有更新（重新跑了测试）就覆盖重建，避免上传旧包。
+ */
+async function ensureReportArchive(directory, joinPath) {
+  const reportDir = toHostPath(joinPath(directory, 'report'));
+  const dirStat = await fs.stat(reportDir).catch(() => null);
+  if (!dirStat?.isDirectory()) return '';
+  const zipPath = joinPath(directory, 'report', PHASE2_REPORT_NAME);
+  const zipStat = await fs.stat(toHostPath(zipPath)).catch(() => null);
+  // 目录里已经有 zip（人工整理好的包）就不要再套一层 zip，交给 pickReportZipPath 去挑。
+  const names = await fs.readdir(reportDir).catch(() => []);
+  if (names.some((name) => /\.zip$/i.test(name))) return '';
+  const newest = await newestMtimeMs(reportDir, { ignore: new Set([path.resolve(toHostPath(zipPath))]) });
+  if (zipStat?.isFile() && zipStat.mtimeMs >= newest) return toHostPath(zipPath);
+  if (!newest) return zipStat?.isFile() ? toHostPath(zipPath) : '';
+  await packDirectoryToZip(reportDir, toHostPath(zipPath));
+  return toHostPath(zipPath);
+}
+
+
+/**
+ * 旧版式（有「外观图路径」「PCID.sc路径」、没有「内核」）会自动升级成当前模板：
+ * 这两行改由设备目录自动定位、内核是平台第 2 步必填项。升级失败不阻断流程，
+ * 只把原因作为 warning 返回（典型原因是 Windows 下 WPS/Excel 正打开着工作簿）。
+ */
+export async function ensureWorkbookLayout(workbookPath) {
+  const file = toHostPath(normalizeText(workbookPath));
+  if (!file || path.extname(file).toLowerCase() !== '.xlsx') return { migrated: false };
+  try {
+    await fs.stat(file);
+  } catch {
+    return { migrated: false };
+  }
+  let sheets
+  try {
+    const ExcelJS = loadExcelJs();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(file);
+    // 三个设备类型工作表都要看：模板由旧版式迁移时三张表都缺「内核」。
+    sheets = workbook.worksheets
+      .map((sheet) => sheetLabelIndex(sheet))
+      .filter((index) => index.has('操作系统类型') || index.has('处理状态'))
+  } catch {
+    // 读不动（占位文件、损坏、被独占打开）就当不是旧版式，交给后续读取去报错。
+    return { migrated: false };
+  }
+  if (!sheets.length) return { migrated: false };
+  const stale = sheets.some((index) => index.has('外观图路径') || index.has('PCID.sc路径') || !index.has('内核'));
+  if (!stale) return { migrated: false };
+  try {
+    await ensureWorkbookWritable(file, { attempts: 1 });
+    const record = (await readWorkbook(file)).record;
+    // 内核是平台第 2 步必填项，且与操作系统类型一一对应（标准系统=Linux、
+    // 小型系统=LiteOS-A、轻量系统=LiteOS-M），迁移时顺手补上，省得用户再被「缺少内核」挡一次。
+    if (!normalizeText(record.systemKernel)) {
+      record.systemKernel = KERNEL_BY_SYSTEM_TYPE[record.systemType] || '';
+    }
+    await rewriteWorkbookLayout(file, record);
+    return { migrated: true, warning: '' };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return {
+      migrated: false,
+      warning: `工作簿还是旧版式（缺少「内核」行、仍带「外观图路径」「PCID.sc路径」），自动升级未成功：${detail}`,
+    }
+  }
+}
+
+/** 操作系统类型 → 内核（平台字典 system_kernel 的固定搭配）。 */
+const KERNEL_BY_SYSTEM_TYPE = Object.freeze({
+  标准系统: 'Linux',
+  小型系统: 'LiteOS-A',
+  轻量系统: 'LiteOS-M',
+});
+
+export async function derivePhase2AttachmentPaths(workbookPath) {
+  const input = normalizeText(workbookPath);
+  const windows = /^([a-zA-Z]:[\\/])/.test(input);
+  const joinPath = windows ? path.win32.join : path.join;
+  const directory = windows
+    ? path.win32.dirname(input.replaceAll('/', '\\'))
+    : path.dirname(toHostPath(input));
+  const layout = await ensureWorkbookLayout(input);
+  await ensureReportArchive(directory, joinPath);
+  const exactSelfCheck = joinPath(directory, PHASE2_SELF_CHECK_NAME);
+  const exactReport = joinPath(directory, 'report', PHASE2_REPORT_NAME);
+  const selfCheckPath = await fileExistsAt(exactSelfCheck)
+    ? toHostPath(exactSelfCheck)
+    : await pickSelfCheckPath(directory, joinPath);
+  const reportPath = await fileExistsAt(exactReport)
+    ? toHostPath(exactReport)
+    : await pickReportZipPath(directory, joinPath);
+  return {
+    selfCheckPath: selfCheckPath || toHostPath(exactSelfCheck),
+    reportPath: reportPath || toHostPath(exactReport),
+    mirrorPath: '',
+    layoutMigrated: layout.migrated,
+    layoutWarning: layout.warning ?? '',
+  };
+}
+
+/**
+ * 绝对路径判定同样必须跟随宿主：Windows 宿主下 `D:/ohos/x` 是绝对路径而
+ * POSIX 的 `path.posix.isAbsolute` 判 false（反之 `/mnt/d/x` 在 Windows 下也判 false）。
+ */
+export function isAbsoluteLocalPath(value, platform = process.platform) {
+  const candidate = toHostPath(value, platform);
+  return platform === 'win32' ? path.win32.isAbsolute(candidate) : path.posix.isAbsolute(candidate);
+}
+
+export function isAssessmentNumber(value) {
+  return /^OHC\d+$/.test(normalizeText(value));
+}
+
+export function splitPaths(value, platform = process.platform) {
+  // 必须显式包一层箭头函数：`.map(toHostPath)` 会把数组下标当作第二参数传进去，
+  // 而 toHostPath 的第二参数是 platform —— 索引 0/1/2 永远不等于 'win32'，
+  // 于是 Windows 宿主上被静默当成 Linux 处理（外观图/PCID 路径全变成 /mnt/...）。
+  return normalizeText(value).split(/[;；\n]/).map((item) => toHostPath(item, platform)).filter(Boolean);
+}
+
+async function validateAttachment(errors, label, value, extensions, fileExists) {
+  const input = normalizeText(value);
+  if (!input) {
+    errors.push(`缺少${label}`);
+    return;
+  }
+  const localPath = toHostPath(input);
+  if (!isAbsoluteLocalPath(localPath)) {
+    errors.push(`${label}必须为绝对路径`);
+    return;
+  }
+  if (!extensions.includes(path.extname(localPath).toLowerCase())) {
+    errors.push(`${label}格式不正确`);
+    return;
+  }
+  if (!await fileExists(localPath)) errors.push(`${label}不存在: ${localPath}`);
+}
+
+export async function validatePhase2Attachments({ selfCheckPath, reportPath, mirrorPath }, { fileExists = async (filePath) => {
+  try { return (await fs.stat(filePath)).isFile(); } catch { return false; }
+} } = {}) {
+  const errors = [];
+  await validateAttachment(errors, 'PCS自检表路径', selfCheckPath, ['.xlsx'], fileExists);
+  await validateAttachment(errors, 'XTS报告路径', reportPath, ['.zip'], fileExists);
+  if (normalizeText(mirrorPath)) await validateAttachment(errors, '镜像固件路径', mirrorPath, ['.7z', '.zip'], fileExists);
+  return errors;
+}
+
+export function loadExcelJs() {
+  const runtime = process.env.OH_AUTOMATION_TOOL_DIR || process.env.OH_WAIVER_TOOL_DIR;
+  if (runtime) return createRequire(path.join(runtime, 'package.json'))('exceljs');
+  // 必须用 fileURLToPath：`new URL(import.meta.url).pathname` 在 Windows 上给出
+  // `/C:/…`（多一个前导斜杠）且对空格/中文做百分号编码，createRequire 会拿到不存在的路径。
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return createRequire(path.join(here, '..', 'package.json'))('exceljs');
+}
+
+function cellText(cell) {
+  if (!cell) return '';
+  const value = cell.value;
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  // 合并单元格的从属格在 exceljs 里是 MergeValue，master 为空时取 text 会抛错。
+  if (value && typeof value === 'object' && 'merge' in value) return '';
+  try {
+    return normalizeText(cell.text || value);
+  } catch {
+    return normalizeText(value);
+  }
+}
+
+function typeForSheet(sheetName) {
+  if (sheetName === SHEETS.board) return 'board';
+  if (sheetName === SHEETS.release) return 'release';
+  if (sheetName === SHEETS.commercial) return 'commercial';
+  throw new Error(`Unsupported worksheet: ${sheetName}`);
+}
+
+function recordFromValues(sheetName, values, state = {}) {
+  const common = {
+    type: typeForSheet(sheetName),
+    sheetName,
+    applicationId: normalizeText(state.applicationId),
+    assessmentNumber: normalizeText(state.assessmentNumber),
+    processingStatus: normalizeText(state.status) || '待处理',
+    processedAt: normalizeText(state.processedAt),
+    notes: normalizeText(state.notes),
+    systemType: normalizeText(values.systemType),
+    osVersion: normalizeText(values.osVersion),
+    // 平台第 2 步（内核）与样机寄送第 5 步（快递单号）对所有设备类型都适用。
+    systemKernel: normalizeText(values.systemKernel),
+    expressOrderNo: normalizeText(values.expressOrderNo),
+    description: normalizeText(values.description),
+    appearancePaths: splitPaths(values.appearancePaths),
+    publicity: normalizeText(values.publicity) || '发证即公示',
+    publicizeDate: normalizeText(values.publicizeDate),
+    softwareVersion: normalizeText(values.softwareVersion),
+    securityPatch: normalizeText(values.securityPatch),
+  };
+  if (sheetName === SHEETS.release) {
+    return {
+      ...common,
+      name: normalizeText(values.name),
+      devices: [1, 2].map((number) => ({
+        moduleModel: normalizeText(values[`device${number}ModuleModel`]),
+        chipModel: normalizeText(values[`device${number}ChipModel`]),
+        cpuArchitecture: normalizeText(values[`device${number}CpuArchitecture`]),
+        supportsInstall: normalizeText(values[`device${number}SupportsInstall`]),
+        withScreen: normalizeText(values[`device${number}WithScreen`]),
+        versionId: normalizeText(values[`device${number}VersionId`]),
+        versionHash: normalizeText(values[`device${number}VersionHash`]),
+        pcidScPath: toHostPath(values[`device${number}PcidScPath`]),
+      })),
+    };
+  }
+  return {
+    ...common,
+    name: normalizeText(values.name),
+    moduleModel: normalizeText(values.moduleModel),
+    chipModel: normalizeText(values.chipModel),
+    cpuArchitecture: normalizeText(values.cpuArchitecture),
+    supportsInstall: normalizeText(values.supportsInstall),
+    withScreen: normalizeText(values.withScreen),
+    versionId: normalizeText(values.versionId),
+    versionHash: normalizeText(values.versionHash),
+    pcidScPath: toHostPath(values.pcidScPath),
+    ...(sheetName === SHEETS.commercial ? {
+      category: normalizeText(values.category),
+      deviceModel: normalizeText(values.deviceModel),
+      hardwareVersion: normalizeText(values.hardwareVersion),
+      brandName: normalizeText(values.brandName),
+      brandNameEn: normalizeText(values.brandNameEn),
+      authType: normalizeText(values.authType),
+    } : {}),
+  };
+}
+
+export function recordToValues(record) {
+  const values = {
+    systemType: record.systemType,
+    osVersion: record.osVersion,
+    systemKernel: record.systemKernel,
+    expressOrderNo: record.expressOrderNo,
+    name: record.name,
+    description: record.description,
+    appearancePaths: record.appearancePaths?.join('; ') || '',
+    publicity: record.publicity,
+    publicizeDate: record.publicizeDate,
+    softwareVersion: record.softwareVersion,
+    securityPatch: normalizePatchDate(record.securityPatch),
+  };
+  if (record.type === 'release') {
+    for (const [index, device] of record.devices.entries()) {
+      const number = index + 1;
+      values[`device${number}ModuleModel`] = device.moduleModel;
+      values[`device${number}ChipModel`] = device.chipModel;
+      values[`device${number}CpuArchitecture`] = device.cpuArchitecture;
+      values[`device${number}SupportsInstall`] = device.supportsInstall;
+      values[`device${number}WithScreen`] = device.withScreen;
+      values[`device${number}VersionId`] = device.versionId;
+      values[`device${number}VersionHash`] = device.versionHash;
+      values[`device${number}PcidScPath`] = device.pcidScPath;
+    }
+    return values;
+  }
+  return {
+    ...values,
+    moduleModel: record.moduleModel,
+    chipModel: record.chipModel,
+    cpuArchitecture: record.cpuArchitecture,
+    supportsInstall: record.supportsInstall,
+    withScreen: record.withScreen,
+    versionId: record.versionId,
+    versionHash: record.versionHash,
+    pcidScPath: record.pcidScPath,
+    ...(record.type === 'commercial' ? {
+      category: record.category,
+      deviceModel: record.deviceModel,
+      hardwareVersion: record.hardwareVersion,
+      brandName: record.brandName,
+      brandNameEn: record.brandNameEn,
+      authType: record.authType,
+    } : {}),
+  };
+}
+
+function recordState(record) {
+  return {
+    applicationId: record.applicationId,
+    assessmentNumber: record.assessmentNumber,
+    status: record.processingStatus,
+    processedAt: record.processedAt,
+    notes: record.notes,
+  };
+}
+
+function sheetLabelIndex(sheet) {
+  const index = new Map();
+  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    row.eachCell({ includeEmpty: false }, (cell, columnNumber) => {
+      if (columnNumber > 8) return;
+      const text = normalizeText(cellText(cell));
+      if (text && !index.has(text)) index.set(text, { row: rowNumber, column: columnNumber });
+    });
+  });
+  return index;
+}
+
+function valuesFromFormSheet(sheet, sheetName) {
+  const labels = sheetLabelIndex(sheet);
+  const values = {};
+  for (const [key, label, cell] of FIELD_LAYOUTS[sheetName]) {
+    const hit = labels.get(normalizeText(label));
+    if (!hit) continue;
+    // 值列取模板里的列字母（板级/商用为 C，发行版两套硬件为 B/F），行号按标签实际所在行——
+    // 这样旧表格（含「外观图路径」「PCID.sc路径」两行）和新表格都能读。
+    const column = /^([A-Z]+)/.exec(cell)?.[1] ?? 'C';
+    values[key] = cellText(sheet.getCell(`${column}${hit.row}`));
+  }
+  const state = Object.fromEntries(Object.entries(STATUS_CELLS).map(([key, cell]) => [key, cellText(sheet.getCell(cell))]));
+  return recordFromValues(sheetName, values, state);
+}
+
+function headersMatch(sheet, expected) {
+  return expected.every((header, index) => cellText(sheet.getRow(1).getCell(index + 1)) === header);
+}
+
+function valuesFromLegacyRow(sheet, headers) {
+  const row = sheet.getRow(2);
+  return Object.fromEntries(headers.map((header, index) => [header, cellText(row.getCell(index + 1))]));
+}
+
+function legacyRecord(sheet, sheetName) {
+  const row = valuesFromLegacyRow(sheet, LEGACY_HEADERS[sheetName]);
+  const values = {};
+  if (sheetName === SHEETS.board) {
+    Object.assign(values, {
+      systemType: row['操作系统类型'], osVersion: row['操作系统版本号'], name: row['模组/开发板名称(传播名)'],
+      moduleModel: row['模组/开发板型号'], chipModel: row['芯片型号'], cpuArchitecture: row['CPU架构'],
+      supportsInstall: row['是否支持应用安装'], withScreen: row['是否带屏'], description: row['基本信息描述'],
+      appearancePaths: row['外观图路径'], publicity: row['是否允许公示'], publicizeDate: row['最早公示日期'],
+      softwareVersion: row['软件版本号'], securityPatch: row['安全补丁标签'], versionId: row['版本Id'],
+      versionHash: row['版本Hash'], pcidScPath: row['PCID.sc路径'],
+    });
+  } else if (sheetName === SHEETS.commercial) {
+    Object.assign(values, {
+      systemType: row['操作系统类型'], osVersion: row['操作系统版本号'], name: row['设备名称(传播名)'],
+      category: row['设备类型'], deviceModel: row['设备型号'], hardwareVersion: row['硬件设备版本号'],
+      brandName: row['品牌'], brandNameEn: row['品牌英文名'], moduleModel: row['模组型号'], chipModel: row['芯片型号'],
+      cpuArchitecture: row['CPU架构'], authType: row['认证方式'], supportsInstall: row['是否支持应用安装'],
+      withScreen: row['是否带屏'], description: row['基本信息描述'], appearancePaths: row['外观图路径'],
+      publicity: row['是否允许公示'], publicizeDate: row['最早公示日期'], softwareVersion: row['软件版本号'],
+      securityPatch: row['安全补丁标签'], versionId: row['版本Id'], versionHash: row['版本Hash'], pcidScPath: row['PCID.sc路径'],
+    });
+  } else {
+    Object.assign(values, {
+      systemType: row['操作系统类型'], osVersion: row['操作系统版本号'], name: row['发行版名称(传播名)'],
+      description: row['基本信息描述'], appearancePaths: row['外观图路径'], publicity: row['是否允许公示'],
+      publicizeDate: row['最早公示日期'], softwareVersion: row['软件版本号'], securityPatch: row['安全补丁标签'],
+    });
+    for (const number of [1, 2]) {
+      values[`device${number}ModuleModel`] = row[`设备${number}模组型号`];
+      values[`device${number}ChipModel`] = row[`设备${number}芯片型号`];
+      values[`device${number}CpuArchitecture`] = row[`设备${number}CPU架构`];
+      values[`device${number}SupportsInstall`] = row[`设备${number}是否支持应用安装`];
+      values[`device${number}WithScreen`] = row[`设备${number}是否带屏`];
+      values[`device${number}VersionId`] = row[`设备${number}版本Id`];
+      values[`device${number}VersionHash`] = row[`设备${number}版本Hash`];
+      values[`device${number}PcidScPath`] = row[`设备${number}PCID.sc路径`];
+    }
+  }
+  const assessmentNumber = normalizeText(row['测评编号']);
+  return recordFromValues(sheetName, values, {
+    assessmentNumber,
+    status: assessmentNumber ? '待平台核验' : '待处理',
+    notes: assessmentNumber ? '由旧版表格迁移，需回读平台核验。' : '',
+  });
+}
+
+function businessValueCount(record) {
+  if (record.type === 'release') {
+    return [record.name, record.devices[0]?.moduleModel, record.devices[1]?.moduleModel]
+      .filter((value) => normalizeText(value)).length;
+  }
+  return [record.name, record.moduleModel, record.chipModel, record.description]
+    .filter((value) => normalizeText(value)).length;
+}
+
+const APPEARANCE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+
+function attachmentKey(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '');
+}
+
+async function readDirectoryFiles(dir) {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+async function fileExistsAt(filePath) {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 外观图与 PCID.sc 一律按「工作簿所在目录」解析：
+ * 表格里那一列只作为兜底（旧文件），写死的绝对路径不再优先。
+ */
+export async function resolveAttachmentPaths(record, directory) {
+  const files = await readDirectoryFiles(directory);
+  const images = files
+    .filter((name) => !name.startsWith('~$') && APPEARANCE_EXTENSIONS.has(path.extname(name).toLowerCase()))
+    .sort();
+  const hints = [record.name, record.moduleModel, path.basename(directory)]
+    .map(attachmentKey)
+    .filter((item) => item.length >= 3);
+  const preferredImage = images.find((name) => {
+    const key = attachmentKey(path.basename(name, path.extname(name)));
+    return key && hints.some((hint) => key.includes(hint) || hint.includes(key));
+  });
+  const fallbackImage = preferredImage ?? (images.length === 1 ? images[0] : '');
+  const pcidName = files.find((name) => name.toLowerCase() === 'pcid.sc');
+  const devices = record.type === 'release' ? record.devices : [record];
+  for (const device of devices) {
+    const keepImages = [];
+    for (const item of device.appearancePaths ?? []) {
+      const candidate = toHostPath(item);
+      if (isAbsoluteLocalPath(candidate) && await fileExistsAt(candidate)) keepImages.push(candidate);
+    }
+    if (!keepImages.length && fallbackImage) keepImages.push(toHostPath(path.join(directory, fallbackImage)));
+    device.appearancePaths = keepImages;
+
+    const configured = toHostPath(device.pcidScPath);
+    if (pcidName) {
+      device.pcidScPath = toHostPath(path.join(directory, pcidName));
+    } else if (configured && isAbsoluteLocalPath(configured) && await fileExistsAt(configured)) {
+      device.pcidScPath = configured;
+    } else if (configured) {
+      const relative = toHostPath(path.join(directory, configured));
+      device.pcidScPath = await fileExistsAt(relative) ? relative : '';
+    } else {
+      device.pcidScPath = '';
+    }
+  }
+  return record;
+}
+
+async function readWorkbook(sourcePath) {
+  const ExcelJS = loadExcelJs();
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.readFile(sourcePath);
+  } catch (error) {
+    throw new WorkbookValidationError([`无法读取工作簿: ${sourcePath}`, error.message]);
+  }
+  const candidates = [];
+  for (const sheetName of SHEET_ORDER) {
+    const sheet = workbook.getWorksheet(sheetName);
+    if (!sheet) {
+      throw new WorkbookValidationError([`缺少工作表: ${sheetName}`]);
+    }
+    let record;
+    if (normalizeText(sheet.getCell('A1').value).startsWith('OpenHarmony兼容性申请')) {
+      record = valuesFromFormSheet(sheet, sheetName);
+    } else if (headersMatch(sheet, LEGACY_HEADERS[sheetName])) {
+      record = legacyRecord(sheet, sheetName);
+    } else {
+      throw new WorkbookValidationError([`${sheetName} 格式不受支持，请使用技能生成的单设备工作簿。`]);
+    }
+    if (businessValueCount(record)) {
+      candidates.push(record);
+    }
+  }
+  if (!candidates.length) {
+    throw new WorkbookValidationError(['请在且仅在一个设备类型工作表中填写设备信息。']);
+  }
+  if (candidates.length > 1) {
+    throw new WorkbookValidationError(['一个工作簿只能填写一个设备类型，检测到多个已填写工作表。']);
+  }
+  const record = candidates[0];
+  await resolveAttachmentPaths(record, path.dirname(sourcePath));
+  return { sourcePath, record };
+}
+
+function requireText(errors, label, value) {
+  if (!normalizeText(value)) errors.push(`缺少${label}`);
+}
+
+function validateSelections(errors, device) {
+  if (!INSTALL_VALUES.includes(device.supportsInstall)) errors.push('“是否支持应用安装”无效');
+  if (!SCREEN_VALUES.includes(device.withScreen)) errors.push('“是否带屏”无效');
+  if (device.supportsInstall === '不支持应用安装' && device.withScreen !== '不带屏') {
+    errors.push('不支持应用安装时必须选择“不带屏”');
+  }
+}
+
+async function checkFile(errors, label, filePath, extensions, fileExists) {
+  if (!filePath) {
+    errors.push(`缺少${label}`);
+    return;
+  }
+  if (!isAbsoluteLocalPath(filePath)) {
+    errors.push(`${label}必须为绝对路径`);
+    return;
+  }
+  if (!extensions.includes(path.extname(filePath).toLowerCase())) {
+    errors.push(`${label}格式不正确`);
+    return;
+  }
+  if (!await fileExists(filePath)) errors.push(`${label}不存在: ${filePath}`);
+}
+
+async function validateDeviceFiles(errors, record, device, label, fileExists) {
+  if (['标准系统', '小型系统'].includes(record.systemType)) {
+    await checkFile(errors, `${label}PCID.sc`, device.pcidScPath, ['.sc'], fileExists);
+  }
+}
+
+export async function validateRecord(record, { fileExists = async (filePath) => {
+  try { return (await fs.stat(filePath)).isFile(); } catch { return false; }
+} } = {}) {
+  const errors = [];
+  if (record.assessmentNumber && !isAssessmentNumber(record.assessmentNumber)) {
+    errors.push('测评编号格式不正确');
+  }
+  for (const [label, value] of [
+    ['操作系统类型', record.systemType], ['操作系统版本号', record.osVersion], ['内核', record.systemKernel],
+    ['基本信息描述', record.description], ['软件版本号', record.softwareVersion], ['安全补丁标签', record.securityPatch],
+  ]) requireText(errors, label, value);
+  if (!PUBLICITY_VALUES.includes(record.publicity)) errors.push('“是否允许公示”无效');
+  if (record.publicity === '选择最早公示时间' && !record.publicizeDate) errors.push('缺少最早公示日期');
+  if (!record.appearancePaths.length) errors.push('外观图：设备目录下没有图片文件（.png / .jpg / .webp）');
+  if (record.appearancePaths.length > 10) errors.push('外观图最多10张');
+  for (const filePath of record.appearancePaths) {
+    await checkFile(errors, '外观图', filePath, ['.png', '.jpg', '.jpeg', '.webp'], fileExists);
+  }
+  if (record.type === 'release') {
+    for (const [index, device] of record.devices.entries()) {
+      const label = `设备${index + 1}`;
+      for (const [field, value] of [
+        ['模组型号', device.moduleModel], ['芯片型号', device.chipModel], ['CPU架构', device.cpuArchitecture],
+        ['版本Id', device.versionId], ['版本Hash', device.versionHash],
+      ]) requireText(errors, `${label}${field}`, value);
+      validateSelections(errors, device);
+      await validateDeviceFiles(errors, record, device, label, fileExists);
+    }
+    if (record.devices.length !== 2) errors.push('发行版必须填写两套关联硬件配置');
+  } else {
+    // 商用设备的「模组型号」「认证方式」为选填（信息可能确实没有），
+    // 但认证方式一旦填写就必须是合法字典值。
+    const required = [
+      [record.type === 'board' ? '模组/开发板名称(传播名)' : '设备名称(传播名)', record.name],
+      ['芯片型号', record.chipModel], ['CPU架构', record.cpuArchitecture],
+      ['版本Id', record.versionId], ['版本Hash', record.versionHash],
+    ];
+    if (record.type === 'board') required.push(['模组型号', record.moduleModel]);
+    for (const [label, value] of required) requireText(errors, label, value);
+    validateSelections(errors, record);
+    await validateDeviceFiles(errors, record, record, '', fileExists);
+    if (record.type === 'commercial') {
+      for (const [label, value] of [
+        ['设备类型', record.category], ['设备型号', record.deviceModel], ['硬件设备版本号', record.hardwareVersion],
+        ['品牌', record.brandName], ['品牌英文名', record.brandNameEn],
+      ]) requireText(errors, label, value);
+      if (record.authType && !AUTH_VALUES.includes(record.authType)) errors.push('“认证方式”无效');
+      if (/[\u4e00-\u9fff]/.test(record.brandNameEn)) errors.push('品牌英文名不能包含中文');
+    }
+  }
+  if (record.processingStatus === '联系人创建中' && !record.applicationId) {
+    errors.push('联系人创建中但缺少申请标识，已停止以避免重复创建。');
+  }
+  if (record.processingStatus === '需人工处理') {
+    errors.push('工作簿标记为需人工处理，已停止执行。');
+  }
+  return errors;
+}
+
+export async function readPhase2Workbook(workbookPath, options = {}) {
+  if (!workbookPath) throw new WorkbookValidationError(['没有提供对应的申请表格文件，已停止执行。']);
+  const sourcePath = toHostPath(workbookPath);
+  if (!isAbsoluteLocalPath(sourcePath) || path.extname(sourcePath).toLowerCase() !== '.xlsx') {
+    throw new WorkbookValidationError(['申请表格文件必须为绝对路径的 .xlsx 文件。']);
+  }
+  try { await fs.access(sourcePath); } catch { throw new WorkbookValidationError([`申请表格文件不存在: ${sourcePath}`]); }
+  const input = await readWorkbook(sourcePath);
+  const errors = await validateRecord(input.record, options);
+  if (errors.length) throw new WorkbookValidationError(errors);
+  return input;
+}
+
+function applyCellStyle(cell, style = {}) {
+  cell.font = { name: 'Microsoft YaHei', size: 10, ...style.font };
+  cell.alignment = { vertical: 'center', wrapText: true, ...style.alignment };
+  if (style.fill) cell.fill = style.fill;
+  if (style.border) cell.border = style.border;
+}
+
+const BORDER = Object.freeze({
+  top: { style: 'thin', color: { argb: 'FFD9E1F0' } }, bottom: { style: 'thin', color: { argb: 'FFD9E1F0' } },
+  left: { style: 'thin', color: { argb: 'FFD9E1F0' } }, right: { style: 'thin', color: { argb: 'FFD9E1F0' } },
+});
+
+function mergeValueRow(sheet, row, label, valueCell, value) {
+  sheet.mergeCells(`A${row}:B${row}`);
+  sheet.mergeCells(`C${row}:H${row}`);
+  sheet.getCell(`A${row}`).value = label;
+  sheet.getCell(valueCell).value = value || '';
+  applyCellStyle(sheet.getCell(`A${row}`), { font: { bold: true, color: { argb: 'FF334155' } }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F6FB' } }, border: BORDER });
+  applyCellStyle(sheet.getCell(valueCell), { border: BORDER });
+  sheet.getRow(row).height = label.includes('描述') || label.includes('路径') || label.includes('版本Id') ? 36 : 25;
+}
+
+function mergePairRow(sheet, row, leftLabel, leftCell, leftValue, rightLabel, rightCell, rightValue) {
+  sheet.mergeCells(`B${row}:D${row}`);
+  sheet.mergeCells(`F${row}:H${row}`);
+  sheet.getCell(`A${row}`).value = leftLabel;
+  sheet.getCell(leftCell).value = leftValue || '';
+  sheet.getCell(`E${row}`).value = rightLabel;
+  sheet.getCell(rightCell).value = rightValue || '';
+  for (const cell of [`A${row}`, `E${row}`]) {
+    applyCellStyle(sheet.getCell(cell), { font: { bold: true, color: { argb: 'FF334155' } }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F6FB' } }, border: BORDER });
+  }
+  applyCellStyle(sheet.getCell(leftCell), { border: BORDER });
+  applyCellStyle(sheet.getCell(rightCell), { border: BORDER });
+  sheet.getRow(row).height = 26;
+}
+
+function section(sheet, row, title) {
+  sheet.mergeCells(`A${row}:H${row}`);
+  sheet.getCell(`A${row}`).value = title;
+  applyCellStyle(sheet.getCell(`A${row}`), { font: { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3478F6' } }, alignment: { horizontal: 'left' } });
+  sheet.getRow(row).height = 28;
+}
+
+function addListValidation(sheet, cell, values) {
+  sheet.dataValidations.add(cell, {
+    type: 'list',
+    allowBlank: true,
+    formulae: [`"${values.join(',')}"`],
+    showErrorMessage: true,
+    errorStyle: 'stop',
+    errorTitle: '选项无效',
+    error: '请从下拉选项中选择。',
+  });
+}
+
+function addStableValidations(sheet, sheetName) {
+  for (const [key, , cell] of FIELD_LAYOUTS[sheetName]) {
+    if (key.endsWith('SupportsInstall') || key === 'supportsInstall') addListValidation(sheet, cell, INSTALL_VALUES);
+    if (key.endsWith('WithScreen') || key === 'withScreen') addListValidation(sheet, cell, SCREEN_VALUES);
+    if (key === 'publicity') addListValidation(sheet, cell, PUBLICITY_VALUES);
+    if (key === 'authType') addListValidation(sheet, cell, AUTH_VALUES);
+    if (key === 'systemKernel') addListValidation(sheet, cell, KERNEL_VALUES);
+  }
+}
+
+function setupSheet(sheet, sheetName, values = {}, state = {}) {
+  sheet.views = [{ state: 'frozen', ySplit: 6 }];
+  sheet.properties.defaultRowHeight = 22;
+  [16, 20, 19, 19, 16, 20, 19, 19].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
+  sheet.mergeCells('A1:H1');
+  sheet.getCell('A1').value = `OpenHarmony兼容性申请 - ${sheetName}`;
+  applyCellStyle(sheet.getCell('A1'), { font: { bold: true, size: 15, color: { argb: 'FFFFFFFF' } }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } }, alignment: { horizontal: 'left' } });
+  sheet.getRow(1).height = 32;
+  sheet.mergeCells('B3:D3'); sheet.mergeCells('F3:H3'); sheet.mergeCells('B4:D4'); sheet.mergeCells('F4:H4'); sheet.mergeCells('B5:H5');
+  for (const [labelCell, valueCell, label, value] of [
+    ['A3', STATUS_CELLS.status, '处理状态', state.status || (Object.values(values).some((item) => normalizeText(item)) ? '待处理' : '')],
+    ['E3', STATUS_CELLS.applicationId, '申请标识', state.applicationId],
+    ['A4', STATUS_CELLS.assessmentNumber, '测评编号', state.assessmentNumber],
+    ['E4', STATUS_CELLS.processedAt, '最近处理时间', state.processedAt],
+    ['A5', STATUS_CELLS.notes, '处理说明', state.notes],
+  ]) {
+    sheet.getCell(labelCell).value = label;
+    sheet.getCell(valueCell).value = value || '';
+    applyCellStyle(sheet.getCell(labelCell), { font: { bold: true, color: { argb: 'FF334155' } }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FA' } }, border: BORDER });
+    applyCellStyle(sheet.getCell(valueCell), { border: BORDER });
+  }
+  sheet.getRow(5).height = 34;
+  const rowOf = ([, , cell]) => Number(cell.match(/\d+/)[0]);
+  const rowsBetween = (fields, from, to) => fields.filter(([, , cell]) => {
+    const row = Number(cell.match(/\d+/)[0]);
+    return row >= from && row <= to;
+  });
+  const mergeRows = (fields) => {
+    for (const [key, label, cell] of fields) mergeValueRow(sheet, rowOf([key, label, cell]), label, cell, values[key]);
+  };
+  const mergePairRows = (rows) => {
+    for (const row of rows) {
+      const fields = RELEASE_FIELDS.filter(([, , cell]) => Number(cell.match(/\d+/)[0]) === row);
+      mergePairRow(sheet, row, fields[0][1], fields[0][2], values[fields[0][0]], fields[1][1], fields[1][2], values[fields[1][0]]);
+    }
+  };
+  if (sheetName === SHEETS.board) {
+    section(sheet, 7, '产品定义');
+    mergeRows(rowsBetween(BOARD_FIELDS, 8, 19));
+    section(sheet, 20, '软件定义');
+    mergeRows(rowsBetween(BOARD_FIELDS, 21, 24));
+    section(sheet, 25, '样机寄送');
+    mergeRows(rowsBetween(BOARD_FIELDS, 26, 26));
+  } else if (sheetName === SHEETS.commercial) {
+    section(sheet, 7, '产品定义');
+    mergeRows(rowsBetween(COMMERCIAL_FIELDS, 8, 25));
+    section(sheet, 26, '软件定义');
+    mergeRows(rowsBetween(COMMERCIAL_FIELDS, 27, 30));
+    section(sheet, 31, '样机寄送');
+    mergeRows(rowsBetween(COMMERCIAL_FIELDS, 32, 32));
+  } else {
+    section(sheet, 7, '产品定义');
+    mergeRows(rowsBetween(RELEASE_FIELDS, 8, 14));
+    section(sheet, 16, '关联硬件配置（固定两套）');
+    mergePairRows([17, 18, 19, 20, 21]);
+    section(sheet, 23, '软件定义');
+    mergeRows(rowsBetween(RELEASE_FIELDS, 24, 25));
+    section(sheet, 26, '关联硬件软件信息');
+    mergePairRows([27, 28]);
+    section(sheet, 29, '样机寄送');
+    mergeRows(rowsBetween(RELEASE_FIELDS, 30, 30));
+  }
+  for (const [key, , cell] of FIELD_LAYOUTS[sheetName]) {
+    const cellRef = sheet.getCell(cell);
+    if (key.includes('versionId') || key.includes('description')) cellRef.alignment = { vertical: 'center', wrapText: true };
+  }
+  addStableValidations(sheet, sheetName);
+}
+
+function blankRecord(sheetName) {
+  return recordFromValues(sheetName, {}, { status: '' });
+}
+
+async function writeSingleDeviceWorkbook(destination, record) {
+  const ExcelJS = loadExcelJs();
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'OpenHarmony Compatibility Application Skill';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+  for (const sheetName of SHEET_ORDER) {
+    const sheet = workbook.addWorksheet(sheetName);
+    const current = sheetName === record.sheetName ? record : blankRecord(sheetName);
+    setupSheet(sheet, sheetName, recordToValues(current), recordState(current));
+  }
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await workbook.xlsx.writeFile(destination);
+}
+
+export async function readWorkbookMeta(workbookPath) {
+  const { record } = await readWorkbook(toHostPath(workbookPath));
+  return { sheetName: record.sheetName, name: record.name || '' };
+}
+
+export async function rewriteWorkbookLayout(workbookPath, record = null) {
+  const destination = toHostPath(workbookPath);
+  const source = record ?? (await readWorkbook(destination)).record;
+  await writeSingleDeviceWorkbook(destination, source);
+  return destination;
+}
+
+export async function createPhase2Workbook(outputPath = DEFAULT_WORKBOOK_PATH) {
+  const destination = toHostPath(outputPath);
+  if (!isAbsoluteLocalPath(destination) || path.extname(destination).toLowerCase() !== '.xlsx') throw new Error('输出路径必须为绝对路径的 .xlsx 文件');
+  let record = blankRecord(SHEETS.board);
+  try {
+    await fs.access(destination);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (await fs.access(destination).then(() => true).catch(() => false)) {
+    ({ record } = await readWorkbook(destination));
+  }
+  if (record.assessmentNumber && !record.applicationId) {
+    record.processingStatus = '待平台核验';
+    record.notes = '由旧格式迁移，运行时将回读平台避免重复申请。';
+  }
+  await writeSingleDeviceWorkbook(destination, record);
+  return destination;
+}
+
+export async function writeWorkbookState(workbookPath, patch) {
+  const { sourcePath, record } = await readWorkbook(toHostPath(workbookPath));
+  Object.assign(record, {
+    applicationId: patch.applicationId ?? record.applicationId,
+    assessmentNumber: patch.assessmentNumber ?? record.assessmentNumber,
+    processingStatus: patch.status ?? record.processingStatus,
+    processedAt: patch.processedAt ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
+    notes: patch.notes ?? record.notes,
+  });
+  await writeSingleDeviceWorkbook(sourcePath, record);
+  return { sourcePath, record };
+}
+
+export function encodeVersionId(value) {
+  return normalizeText(value).replaceAll(',', '∑');
+}
+
+export function expectedSoftwareValues(record) {
+  const devices = record.type === 'release' ? record.devices : [record];
+  return {
+    softwareVersion: record.softwareVersion,
+    securityPatch: normalizePatchDate(record.securityPatch),
+    versionIds: devices.map((device) => device.versionId),
+    versionHashes: devices.map((device) => device.versionHash),
+    pcidScPaths: devices.map((device) => device.pcidScPath).filter(Boolean),
+  };
+}

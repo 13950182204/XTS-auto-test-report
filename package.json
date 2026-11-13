@@ -1,0 +1,32 @@
+{
+  "name": "xts-reporter-app",
+  "version": "0.1.0",
+  "description": "OpenHarmony XTS 报告上传与自动测试 · 独立 Windows 桌面应用",
+  "private": true,
+  "type": "module",
+  "main": "out/main/main.js",
+  "author": "13950182204",
+  "scripts": {
+    "build": "npm run build:renderer && npm run build:main",
+    "build:renderer": "vite build",
+    "build:main": "tsc -p tsconfig.electron.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
+    "start": "npm run build && electron .",
+    "app": "electron ."
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.49.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
