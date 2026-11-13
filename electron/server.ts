@@ -117,6 +117,18 @@ const testState: TestState = { phase: 'idle' }
 let testProcess: { killTree(): void; pid?: number } | null = null
 let testResult: XtsTestResult | undefined
 
+/** 设备连接页：盒子连接 + 被测设备配网的独立状态。 */
+type DeviceState = {
+  phase: 'idle' | 'pairing'
+  startedAt?: string
+  finishedAt?: string
+  ok?: boolean
+  message?: string
+}
+
+const deviceState: DeviceState = { phase: 'idle' }
+let deviceProcess: { killTree(): void; pid?: number } | null = null
+
 function updateState(patch: Partial<RunState>): void {
   Object.assign(state, patch)
 }
@@ -510,7 +522,7 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
 
   async function handleStatus(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== 'GET') return sendJson(res, 405, { ok: false, message: '只支持 GET。' })
-    sendJson(res, 200, { ok: true, state: { ...state }, test: { ...testState } })
+    sendJson(res, 200, { ok: true, state: { ...state }, test: { ...testState }, device: { ...deviceState } })
   }
 
   async function handleSettings(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -1076,9 +1088,149 @@ async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerRespo
   sendJson(res, 200, { ok: true })
 }
 
+  // —— 设备连接页（盒子连接 + 空闲被测设备点选 + 配网） ——
+
+  const DEVICE_LIST_PREFIX = 'DEVICE_LIST_JSON='
+  const DEVICE_PAIR_PREFIX = 'DEVICE_PAIR_JSON='
+
+  function parseDeviceList(output: string): { ok: boolean; devices?: Array<Record<string, unknown>> } | undefined {
+    for (const line of output.split(/\r?\n/).reverse()) {
+      const parsed = parseStructuredLine<{ ok: boolean; devices?: Array<Record<string, unknown>> }>(line, DEVICE_LIST_PREFIX)
+      if (parsed) return parsed
+    }
+    return undefined
+  }
+
+  function parseDevicePair(output: string): { ok: boolean; message?: string; error?: string; addressType?: string } | undefined {
+    for (const line of output.split(/\r?\n/).reverse()) {
+      const parsed = parseStructuredLine<{ ok: boolean; message?: string; error?: string; addressType?: string }>(line, DEVICE_PAIR_PREFIX)
+      if (parsed) return parsed
+    }
+    return undefined
+  }
+
+  function updateDeviceState(patch: Partial<DeviceState>): void {
+    Object.assign(deviceState, patch)
+  }
+
+  /** 忙碌设备：正在运行的 XTS 测试占用的 SN 列表。 */
+  function runningTestSns(): string[] {
+    if (testState.phase !== 'running' && testState.phase !== 'stopping') return []
+    const progress = testState.progress as Record<string, unknown> | undefined
+    const devices = Array.isArray(progress?.devices) ? progress.devices : []
+    return devices.map((item: unknown) => {
+      const record = item !== null && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+      return typeof record.sn === 'string' ? record.sn.trim() : ''
+    }).filter(Boolean)
+  }
+
+  async function handleDeviceList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST' && req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只支持 POST/GET。' })
+    try {
+      const busy = runningTestSns().join(';')
+      const args = ['--list']
+      if (busy) args.push('--busy', busy)
+      const result = await runScript('device_pair.mjs', args, {}, [])
+      const parsed = parseStructuredLine<{ ok: boolean; devices?: Array<Record<string, unknown>>; error?: string }>(result.output.split(/\r?\n/).reverse().find((line: string) => line.startsWith('DEVICE_LIST_JSON=')) ?? '', DEVICE_LIST_PREFIX)
+      if (!parsed?.ok) return sendJson(res, 200, { ok: false, error: parsed?.error || `设备列表获取失败（脚本退出码 ${result.code}）。` })
+      sendJson(res, 200, { ok: true, devices: parsed.devices ?? [] })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, 200, { ok: false, error: `设备列表失败：${message}` })
+    }
+  }
+
+  /** 连接设备：USB SN = 已在线即控到（无需操作）；网络 IP:Port = hdc tconn。 */
+  async function handleDeviceConnect(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
+    try {
+      const body = await readBody(req)
+      const address = text(body.address)
+      if (!address) return sendJson(res, 200, { ok: false, error: '没有提供设备地址（SN 或 IP:Port）。' })
+      const addressType = /[.:]/.test(address) ? 'network' : 'usb'
+      if (addressType === 'usb') {
+        const result = await runScript('device_pair.mjs', ['--list'], {}, [])
+        const online = parseDeviceList(result.output)?.devices?.map((item) => text(item.sn)) ?? []
+        const isOnline = online.some((item) => item.toLowerCase() === address.toLowerCase())
+        if (!isOnline) return sendJson(res, 200, { ok: false, error: `SN ${address} 不在 hdc 在线列表里，请确认设备已连接本机。` })
+        return sendJson(res, 200, { ok: true, message: `SN ${address} 已在线（USB 连接），无需额外操作。`, addressType })
+      }
+      const result = await runScript('device_pair.mjs', ['--tconn', address], {}, [])
+      const parsed = parseStructuredLine<{ ok: boolean; message?: string }>(result.output.split(/\r?\n/).reverse().find((line: string) => line.startsWith('DEVICE_TCONN_JSON=')) ?? '', 'DEVICE_TCONN_JSON=')
+      if (!parsed?.ok) return sendJson(res, 200, { ok: false, error: parsed?.message || `hdc tconn ${address} 失败。` })
+      sendJson(res, 200, { ok: true, message: parsed.message, addressType })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, 200, { ok: false, error: `连接失败：${message}` })
+    }
+  }
+
+  /**
+   * 配网：盒子连通预检 + 拉起 dcct + 等待人工配对完成（超时可配）。
+   * 后台长任务（人工配对可能耗时数分钟），进度走 /status 的 device 字段。
+   */
+  async function handleDevicePair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
+    if (deviceState.phase !== 'idle') return sendJson(res, 409, { ok: false, error: '配网已在进行中，请等待当前配网结束。' })
+    try {
+      const body = await readBody(req)
+      const value = currentSettings()
+      const boxAddr = text(body.boxAddr) || text(value.testBoxSn)
+      const dutSn = text(body.dutSn)
+      if (!boxAddr) return sendJson(res, 200, { ok: false, error: '没有填写测试盒子地址（SN 或 IP:Port）。' })
+      if (!dutSn) return sendJson(res, 200, { ok: false, error: '没有选择被测设备。' })
+      const timeoutMs = Math.max(30000, Math.floor(Number(body.timeoutMs) || 5 * 60 * 1000))
+      const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '')
+      const artifactsDir = join(tmpdir(), `oh-device-pair-${stamp}`)
+      mkdirSync(artifactsDir, { recursive: true })
+      store.merge({ testBoxSn: boxAddr, deviceSns: dutSn })
+      updateDeviceState({ phase: 'pairing', startedAt: new Date().toISOString(), finishedAt: undefined, ok: undefined, message: '正在连接盒子并等待配网…' })
+      const execution = runScript('device_pair.mjs', [
+        '--pair', '--box', boxAddr, '--dut', dutSn, '--timeout-ms', String(timeoutMs),
+        '--artifacts', artifactsDir,
+      ], {}, [], (progress) => {
+        updateDeviceState({ message: progress.detail || progress.stage })
+      })
+      sendJson(res, 200, { ok: true, message: '已开始配网，进度见下方。' })
+      void (async () => {
+        const finishedAt = new Date().toISOString()
+        try {
+          const result = await execution
+          const parsed = parseDevicePair(result.output)
+          const ok = result.code === 0 && parsed?.ok === true
+          const message = parsed?.message || parsed?.error || (ok ? '配网完成。' : `配网失败（脚本退出码 ${result.code}）。`)
+          updateDeviceState({ phase: 'idle', finishedAt, ok, message })
+        } catch (error) {
+          const message = `配网失败：${error instanceof Error ? error.message : String(error)}`
+          updateDeviceState({ phase: 'idle', finishedAt: new Date().toISOString(), ok: false, message })
+        } finally {
+          deviceProcess = null
+        }
+      })()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, 200, { ok: false, error: `配网启动失败：${message}` })
+    }
+  }
+
+  async function handleDeviceStopPair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
+    if (deviceState.phase !== 'pairing') return sendJson(res, 200, { ok: true, message: '当前没有进行中的配网。' })
+    if (deviceProcess?.killTree) deviceProcess.killTree()
+    updateDeviceState({ phase: 'idle', finishedAt: new Date().toISOString(), ok: false, message: '配网已停止。' })
+    sendJson(res, 200, { ok: true, message: '配网已停止。' })
+  }
+
   const routes = new Map<string, (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> | void>([
     [`${API_PREFIX}/status`, handleStatus],
     [`${API_PREFIX}/settings`, handleSettings],
+    [`${API_PREFIX}/device/list`, handleDeviceList],
+    [`${API_PREFIX}/device/pair`, handleDevicePair],
+    [`${API_PREFIX}/device/stop-pair`, handleDeviceStopPair],
+    [`${API_PREFIX}/device/connect`, handleDeviceConnect],
+    [`${API_PREFIX}/device/list`, handleDeviceList],
+    [`${API_PREFIX}/device/pair`, handleDevicePair],
+    [`${API_PREFIX}/device/connect`, handleDeviceConnect],
     [`${API_PREFIX}/auth/status`, handleAuthStatus],
     [`${API_PREFIX}/auth/login`, handleAuthLogin],
     [`${API_PREFIX}/auth/logout`, handleAuthLogout],

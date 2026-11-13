@@ -169,3 +169,30 @@ textarea.input{min-height:86px;resize:vertical;line-height:1.7}
 .theme-card--active{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 25%,transparent)}
 .theme-swatch{width:100%;height:52px;border-radius:var(--radius-sm);border:1px solid var(--border-soft)}
 .theme-label{font-size:12.5px;font-weight:600}
+.dev-input-row{display:flex;align-items:center;gap:10px;min-width:0}
+.dev-input-row .input{flex:1}
+.dev-input-row .chip{flex:none}
+.dev-input-row .dot{flex:none}
+.dev-skeletons{display:grid;gap:8px}
+.sk{height:12px;border-radius:6px;background:linear-gradient(90deg,var(--soft) 25%,var(--hover) 50%,var(--soft) 75%);background-size:200% 100%;animation:sk 1.4s ease infinite}
+@keyframes sk{from{background-position:200% 0}to{background-position:-200% 0}}
+.pick-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-soft);border-radius:var(--radius-sm);background:var(--soft);cursor:pointer}
+.pick-item:hover{background:var(--hover)}
+.pick-item.sel{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 9%,transparent)}
+.pick-title{font-size:12.5px;font-weight:500}
+.pick-sub{font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
+.chip--sel{color:var(--blue);border-color:var(--blue)}
+.dot--idle{background:var(--blue)}
+@keyframes softPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--green) 45%,transparent)}60%{box-shadow:0 0 0 5px transparent}}
+.dot--on{animation:softPulse 2.2s var(--ease) infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.12);border-top-color:var(--text);animation:spin .9s linear infinite;flex:none}
+@keyframes breathe{0%,100%{opacity:.25;transform:scale(.9)}50%{opacity:1;transform:scale(1)}}
+.dots{display:inline-flex;gap:6px}
+.dots span{width:6px;height:6px;border-radius:50%;background:var(--text-2);animation:breathe 1.4s var(--ease) infinite}
+.dots span:nth-child(2){animation-delay:.18s}
+.dots span:nth-child(3){animation-delay:.36s}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.fade{animation:fadeUp .45s var(--ease) both}
+.fade.d2{animation-delay:.08s}.fade.d3{animation-delay:.16s}.fade.d4{animation-delay:.24s}
+.page-head{animation:fadeUp .4s var(--ease) both}

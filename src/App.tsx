@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { request, useStatusPolling, type RunState, type TestState } from './api.js'
+import { request, useStatusPolling, type DeviceState, type RunState, type TestState } from './api.js'
 import { Bar, asRecord, clampPercent, num, str } from './components.js'
 import { initTheme } from './theme.js'
+import { DevicesPage } from './pages/Devices.js'
 import { MaterialsPage } from './pages/Materials.js'
 import { TestRunnerPage } from './pages/TestRunner.js'
 import { MirrorPage } from './pages/Mirror.js'
@@ -10,10 +11,11 @@ import { SettingsPage } from './pages/SettingsPage.js'
 import { OverviewPage } from './pages/Overview.js'
 import { LoginPage } from './pages/Login.js'
 
-type PageId = 'overview' | 'materials' | 'test' | 'mirror' | 'waiver' | 'settings'
+type PageId = 'overview' | 'devices' | 'materials' | 'test' | 'mirror' | 'waiver' | 'settings'
 
 const NAV: Array<{ id: PageId; label: string; icon: string }> = [
   { id: 'overview', label: '概览', icon: '◆' },
+  { id: 'devices', label: '设备连接', icon: '⇄' },
   { id: 'materials', label: '评测资料', icon: '▤' },
   { id: 'test', label: 'XTS 自动测试', icon: '▶' },
   { id: 'mirror', label: '镜像固件上传', icon: '⬆' },
@@ -27,7 +29,7 @@ type Auth = { checked: boolean; loggedIn: boolean; username: string }
 export function App(): ReactElement {
   const [auth, setAuth] = useState<Auth>({ checked: false, loggedIn: false, username: '' })
   const [page, setPage] = useState<PageId>('overview')
-  const [status, setStatus] = useState<{ state: RunState; test: TestState }>({ state: { phase: 'idle' }, test: { phase: 'idle' } })
+  const [status, setStatus] = useState<{ state: RunState; test: TestState; device: DeviceState }>({ state: { phase: 'idle' }, test: { phase: 'idle' }, device: { phase: 'idle' } })
   const [logoutArmed, setLogoutArmed] = useState(false)
 
   useEffect(() => {
@@ -44,13 +46,13 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (!auth.loggedIn) return undefined
-    return useStatusPolling((state, test) => setStatus({ state, test }))
+    return useStatusPolling((state, test, device) => setStatus({ state, test, device }))
   }, [auth.loggedIn])
 
   async function doLogout(): Promise<void> {
     await request('auth/logout', 'POST')
     setLogoutArmed(false)
-    setStatus({ state: { phase: 'idle' }, test: { phase: 'idle' } })
+    setStatus({ state: { phase: 'idle' }, test: { phase: 'idle' }, device: { phase: 'idle' } })
     setAuth({ checked: true, loggedIn: false, username: '' })
     setPage('overview')
   }
@@ -66,18 +68,20 @@ export function App(): ReactElement {
     return <LoginPage onLoggedIn={(username) => setAuth({ checked: true, loggedIn: true, username })} />
   }
 
-  const { state, test } = status
-  const running = state.phase !== 'idle' || test.phase === 'running' || test.phase === 'stopping'
+  const { state, test, device } = status
+  const running = state.phase !== 'idle' || test.phase === 'running' || test.phase === 'stopping' || device.phase === 'pairing'
   const progress = asRecord(state.progress)
   const percent = clampPercent(num(progress?.percent))
   const testPercent = clampPercent(num(asRecord(test.progress)?.percent))
   const taskPercent = state.phase !== 'idle' ? percent : test.phase === 'running' ? testPercent : undefined
   const taskLabel = state.phase !== 'idle'
     ? ({ preflight: '预检中', saving: '资料任务执行中', uploading: '固件上传中' } as Record<string, string>)[state.phase] ?? '任务执行中'
-    : test.phase === 'running' ? 'XTS 自动测试进行中' : test.phase === 'stopping' ? '正在停止测试' : ''
+    : test.phase === 'running' ? 'XTS 自动测试进行中' : test.phase === 'stopping' ? '正在停止测试'
+    : device.phase === 'pairing' ? '设备配网中' : ''
 
   let body: ReactElement
-  if (page === 'materials') body = <MaterialsPage state={state} test={test} reloadTick={0} />
+  if (page === 'devices') body = <DevicesPage device={device} onNavigate={(target) => setPage(target)} />
+  else if (page === 'materials') body = <MaterialsPage state={state} test={test} reloadTick={0} />
   else if (page === 'test') body = <TestRunnerPage state={state} test={test} />
   else if (page === 'mirror') body = <MirrorPage state={state} />
   else if (page === 'waiver') body = <WaiverPage state={state} />

@@ -118,7 +118,28 @@ export type TestState = {
   unpassed?: Array<{ suite: string; module: string }>
 }
 
-export type StatusResponse = { ok: boolean; state: RunState; test: TestState }
+export type StatusResponse = { ok: boolean; state: RunState; test: TestState; device: DeviceState }
+
+export type DeviceState = {
+  phase: 'idle' | 'pairing'
+  startedAt?: string
+  finishedAt?: string
+  ok?: boolean
+  message?: string
+}
+
+export type DeviceListItem = {
+  sn: string
+  type: 'usb' | 'network'
+  busy: boolean
+  ip?: string
+}
+
+export type DeviceListResponse = ApiResult & {
+  devices?: DeviceListItem[]
+}
+
+export type DevicePairResponse = ApiResult & { message?: string }
 
 export type SettingsResponse = {
   ok: boolean
@@ -177,11 +198,11 @@ export type ProbeResponse = ApiResult & {
 }
 
 /** 轮询 /status：App 级单份，所有页面共享。 */
-export function useStatusPolling(onTick: (state: RunState, test: TestState) => void, intervalMs = 2500): () => void {
+export function useStatusPolling(onTick: (state: RunState, test: TestState, device: DeviceState) => void, intervalMs = 2500): () => void {
   let active = true
   const tick = async () => {
     const response = await request<StatusResponse>('status', 'GET')
-    if (active && response.ok) onTick(response.state, response.test)
+    if (active && response.ok) onTick(response.state, response.test, response.device ?? { phase: 'idle' as const })
   }
   void tick()
   const timer = window.setInterval(() => { void tick() }, intervalMs)

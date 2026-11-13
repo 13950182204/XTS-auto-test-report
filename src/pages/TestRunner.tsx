@@ -1,10 +1,8 @@
-import { useEffect, useState , type ReactElement } from 'react'
-import {
-  request, type ProbeDevice, type ProbeBox, type ProbeResponse, type RunState, type TestRound, type TestState,
-} from '../api.js'
+import { useEffect, useState, type ReactElement } from 'react'
+import { request, type RunState, type TestRound, type TestState } from '../api.js'
 import { Bar, Chip, Field, Panel, StatusLine, asArray, asRecord, clampPercent, formatEta, num, str, suiteLabel } from '../components.js'
 
-/** XTS 自动测试页：串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS，多设备并行 + 盒子连通预检。 */
+/** XTS 自动测试页：串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS。SN 与盒子在「设备连接」页管理。 */
 
 const TEST_SUITES = ['ssts', 'hats', 'dcts', 'acts'] as const
 
@@ -12,8 +10,6 @@ type Values = { testCasesPath: string; deviceSns: string; testBoxSn: string; wor
 
 export function TestRunnerPage(props: { state: RunState; test: TestState }): ReactElement {
   const [values, setValues] = useState<Values>({ testCasesPath: '', deviceSns: '', testBoxSn: '', workbookPath: '' })
-  const [probe, setProbe] = useState<ProbeResponse | null>(null)
-  const [probing, setProbing] = useState(false)
   const [pageError, setPageError] = useState('')
   const [pageNote, setPageNote] = useState('')
   const { state, test } = props
@@ -31,7 +27,7 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
       setValues((previous) => ({
         ...previous,
         testCasesPath: value.testCasesPath ?? '',
-        deviceSns: (value.deviceSns ?? '').split(';').map((item) => item.trim()).filter(Boolean).join('\n'),
+        deviceSns: value.deviceSns ?? '',
         testBoxSn: value.testBoxSn ?? '',
         workbookPath: value.workbookPath ?? '',
       }))
@@ -39,49 +35,15 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
     return () => { active = false }
   }, [])
 
-  async function saveSettings(): Promise<boolean> {
-    const response = await request<{ ok: boolean; message?: string }>('settings', 'POST', {
-      testCasesPath: values.testCasesPath.trim(),
-      deviceSns: values.deviceSns.split(/[\n\r;,\s]+/).map((item) => item.trim()).filter(Boolean).join(';'),
-      testBoxSn: values.testBoxSn.trim(),
-      workbookPath: values.workbookPath.trim(),
-    })
-    if (!response.ok) { setPageError(response.message || '设置保存失败。'); return false }
-    return true
-  }
-
   async function start(): Promise<void> {
-    setBusyNow(true); setPageError(''); setPageNote('')
-    const saved = await saveSettings()
-    if (!saved) { setBusyNow(false); return }
+    setPageError(''); setPageNote('')
     const response = await request<{ ok: boolean; message?: string; error?: string }>('test/start', 'POST', {
       testCasesPath: values.testCasesPath.trim(),
-      deviceSns: values.deviceSns.split(/[\n\r;,\s]+/).map((item) => item.trim()).filter(Boolean).join(';'),
       workbookPath: values.workbookPath.trim(),
-      ...(probe?.ok && (probe.screen === 'yes' || probe.screen === 'no') ? { screen: probe.screen } : {}),
     })
-    setBusyNow(false)
     if (!response.ok) setPageError(response.message || 'XTS 测试启动失败。')
     else setPageNote(response.message || 'XTS 测试已开始。')
   }
-
-  async function stop(): Promise<void> {
-    const response = await request<{ ok: boolean; message?: string }>('test/stop', 'POST')
-    setPageNote(response.message || '')
-  }
-
-  async function probeNow(): Promise<void> {
-    setProbing(true); setPageError('')
-    const response = await request<ProbeResponse>('test/probe', 'POST', {
-      deviceSns: values.deviceSns.split(/[\n\r;,\s]+/).map((item) => item.trim()).filter(Boolean).join(';'),
-      testBoxSn: values.testBoxSn.trim(),
-    })
-    setProbing(false)
-    setProbe(response)
-    if (!response.ok) setPageError(response.message || '设备探测失败。')
-  }
-
-  const [busyNow, setBusyNow] = useState(false)
 
   const progress = asRecord(test.progress)
   const percent = clampPercent(num(progress?.percent))
@@ -124,55 +86,32 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
     <>
       <div className="page-head">
         <h1>XTS 自动测试</h1>
-        <p>串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS；SSTS/DCTS 单机执行；失败模块自动增量补测（上限 2 轮）。</p>
+        <p>串行 SSTS → HATS → DCTS(仅有屏+盒子) → ACTS。SN 与盒子在「设备连接」页管理。</p>
       </div>
 
-      <Panel title="测试配置" meta="测试样机提前连接并保持 hdc 在线">
+      <Panel title="测试配置" meta="SN 与盒子在「设备连接」页设置">
         <div className="grid">
           <Field id="t-testcases" label="测试用例路径" wide mono value={values.testCasesPath} placeholder="D:\ohos\XTS6.1\testcase"
             hint="xts-acts 套件根目录（含 ssts/ hats/ dcts/ acts/）"
             onChange={(value) => setValues((v) => ({ ...v, testCasesPath: value }))} />
-          <Field id="t-sns" label="被测设备 SN（每行一台样机）" wide textarea value={values.deviceSns}
-            placeholder={'150100424a4e4234520765512902898d\n150100424a4e42345207653128028981'}
-            hint="HATS / ACTS 多设备并行；也接受分号/逗号分隔"
-            onChange={(value) => setValues((v) => ({ ...v, deviceSns: value }))} />
-          <Field id="t-box" label="测试盒子 SN（DCTS 必需）" wide mono value={values.testBoxSn}
-            placeholder="370100654d4d43202010000071dd7b00"
-            hint="盒子经 hdc 连接本机，不是被测设备 SN"
-            onChange={(value) => setValues((v) => ({ ...v, testBoxSn: value }))} />
           <Field id="t-workbook" label="设备目录（报告归档根）" wide mono value={values.workbookPath}
             placeholder="D:\ohos\XTS6.1\CDOHong\CDO-RK3568"
             hint="报告归档到 该目录\report\<套件>\report-n"
             onChange={(value) => setValues((v) => ({ ...v, workbookPath: value }))} />
         </div>
+        {values.deviceSns || values.testBoxSn ? (
+          <div className="row-top" style={{ gap: 14 }}>
+            <Chip tone="acts">{`盒子 ${snShort(values.testBoxSn)}`}</Chip>
+            <Chip tone="neutral">{`DUT ${values.deviceSns.split(';').map((item) => snShort(item.trim())).join(' · ')}`}</Chip>
+          </div>
+        ) : (
+          <p className="hint">请先在「设备连接」页连接盒子并选择被测设备。</p>
+        )}
         <div className="actions">
-          <button className="btn btn--primary" disabled={hostRunning || testBusy || busyNow} onClick={() => void start()}>{testBusy ? '测试中…' : '开始测试'}</button>
-          <button className="btn btn--danger" disabled={!testRunning} onClick={() => void stop()}>停止测试</button>
-          <button className="btn" disabled={probing || busyNow} onClick={() => void probeNow()}>{probing ? '探测中…' : '探测设备'}</button>
+          <button className="btn btn--primary" disabled={hostRunning || testBusy} onClick={() => void start()}>{testBusy ? '测试中…' : '开始测试'}</button>
+          <button className="btn btn--danger" disabled={!testRunning} onClick={() => { void request('test/stop', 'POST') }}>停止测试</button>
         </div>
       </Panel>
-
-      {probe ? (
-        <Panel title="设备探测 · 测试方案" meta="hdc list targets · ifconfig · ping">
-          <div className="row-top">
-            <Chip tone={probe.ok ? (probe.screen === 'mixed' ? 'warn' : 'ok') : 'blocked'}>{probe.screen === 'yes' ? '有屏' : probe.screen === 'no' ? '无屏' : probe.screen === 'mixed' ? '混合' : '未探测'}</Chip>
-            <span className="path">{probe.ok ? testPlanText(probe.screen) : (probe.error || probe.message || '探测失败')}</span>
-          </div>
-          {probe.devices && probe.devices.length > 0 ? (
-            <div className="row-top">
-              {probe.devices.map((device: ProbeDevice) => (
-                <Chip key={device.sn} tone={device.online ? 'ok' : 'blocked'}>{`${snShort(device.sn)} ${device.online ? (device.screen === 'yes' ? '有屏' : device.screen === 'no' ? '无屏' : '未判定') : '离线'}`}</Chip>
-              ))}
-              {probe.box ? (
-                <Chip tone={probe.box.online ? (probe.box.sameSubnet ? 'ok' : 'warn') : 'blocked'}>{`测试盒子 ${snShort(probe.box.sn)}`}</Chip>
-              ) : null}
-            </div>
-          ) : null}
-          {probe.box?.online ? (
-            <p className="path">{`盒子 IP ${probe.box.ip || '未知'}${probe.box.sameSubnet ? ' · 与被测设备同网段 ✓' : ' · 与被测设备不同网段/读不到 IP ✗'}`}</p>
-          ) : probe.box && !probe.box.online ? <p className="problem">测试盒子不在线：DCTS 会跳过，请确认盒子经 hdc 连接本机。</p> : null}
-        </Panel>
-      ) : null}
 
       {showPipeline ? (
         <Panel title="测试流水线" meta={`套件串行 · ${screen === 'yes' ? '有屏' : screen === 'no' ? '无屏' : '方案待探测'}`}>
@@ -264,11 +203,4 @@ export function TestRunnerPage(props: { state: RunState; test: TestState }): Rea
       {test.message && !testBusy ? <StatusLine tone={test.ok === false ? 'error' : 'ok'}>{str(test.message)}</StatusLine> : null}
     </>
   )
-}
-
-function testPlanText(screen: unknown): string {
-  if (screen === 'yes') return '有屏方案：SSTS 全测 → HATS → DCTS → ACTS 最小集（串行；SSTS/DCTS 单机执行，HATS/ACTS 多设备并行）'
-  if (screen === 'no') return '无屏方案：SSTS 全测 → HATS → ACTS 最小集，跳过 DCTS（串行；SSTS 单机执行）'
-  if (screen === 'mixed') return '设备池混用了有屏与无屏设备，请分开测试'
-  return '点「探测设备」自动判定无屏/有屏并选择对应测试方案'
 }
