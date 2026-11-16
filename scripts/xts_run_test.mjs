@@ -851,6 +851,13 @@ async function doRun(args) {
             }
             // DCTS 重启后 softbus 服务断了——重新启动（对应 service.bat / soket_service.bat）
             if (step.suite === 'dcts') {
+              // bat 里的 hdc install 可能被 shim 干扰——显式重新安装 dcct.hap
+              const dcctHap = path.join(suiteDir, 'resource', 'data', 'dcct.hap');
+              if (await isFile(dcctHap)) {
+                emitTestProgress(`显式安装 dcct.hap 到被测设备…`, true);
+                const installResult = await hdcCommand(hdc, ['-t', suiteSns[0], 'install', dcctHap], 30000).catch(() => undefined);
+                emitTestProgress(installResult && installResult.code === 0 ? 'dcct.hap 安装成功' : `dcct.hap 安装结果不明（继续）`, true);
+              }
               emitTestProgress(`重启 softbus 服务（dsoftbusTest / socketdsoftbusTest）…`, true);
               await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'nohup', '/data/local/tmp/dsoftbusTest', '>', '/dev/null', '2>&1', '&'], 10000).catch(() => {});
               await sleep(2000);
