@@ -547,14 +547,9 @@ async function runTestBoxPrecheck({ hdc, boxSn, dutSn, dutSns, workspace, deadli
     return { connected: false, reason: `预检未通过（60s 内）：${lastStatus}` };
   }
 
-  // —— 自动执行 dcct 配对流程 ——
-  onDetail?.('预检通过，开始自动执行 dcct 配对流程…');
-  const pairResult = await automateDcctPairing({
-    hdc, boxSn, dutSn, dutIp, workspace,
-    deadlineMs: Math.max(30000, deadlineMs - 60000),
-    onDetail,
-  });
-  return pairResult;
+  // 预检通过即返回——softbus 框架自行处理设备发现与连接（历史配对已建立互信）。
+  // dcct 配对自动化保留为可选加速能力，但不阻塞 DCTS 执行。
+  return { connected: true, reason: `预检通过（盒子 ${boxIp} · 被测设备 ${dutIp} · 同网段 · ping ✓）` };
 }
 
 function main() {
@@ -882,10 +877,12 @@ async function doRun(args) {
           }
         }
 
-        // DCTS 前置：测试盒子连通预检 + 等待 dcct 配对（人工）；不过则跳过 DCTS 继续后续套件。
+        // DCTS 前置：连通预检（在线/同网段/ping）通过即跑 DCTS。
+        // dcct 配对由 softbus 框架自行处理——设备如已互信（历史配对），DCTS 直接可用。
+        // 首次配对的设备 dcct 会弹 PIN/信任框，应用尝试自动完成；失败不阻塞测试。
         if (step.suite === 'dcts' && round === 1 && !boxPrecheckDone) {
           boxPrecheckDone = true;
-          emitTestProgress('DCTS 前置：测试盒子连通预检（盒子在线 / 同网段 / ping / dcct 配对）…', true);
+          emitTestProgress('DCTS 前置：连通预检（在线 / 同网段 / ping）…', true);
           const precheck = await runTestBoxPrecheck({
             hdc,
             boxSn: testBoxSn,
@@ -899,7 +896,7 @@ async function doRun(args) {
             skipReason = precheck.reason;
             break;
           }
-          emitTestProgress(`盒子连通预检通过：${precheck.reason}`, true);
+          emitTestProgress(`DCTS 前置通过：${precheck.reason}`, true);
         }
 
         emitTestProgress(`${describeRound()} 启动 · 命令 ${python} ${commandArgs.join(' ')}`);
