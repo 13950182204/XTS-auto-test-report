@@ -7,6 +7,8 @@ import {
   DCCT_ABILITY_NAME,
   DCCT_BUNDLE_NAME,
   DEFAULT_TEST_BOX_SN,
+  excludeHdfModules,
+  filterHdfModules,
   buildUserConfig,
   isTestBoxSnValid,
   joinSns,
@@ -320,9 +322,8 @@ async function runTestBoxPrecheck({ hdc, boxSn, dutSn, dutSns, workspace, deadli
   if (!invalid.ok) return { connected: false, reason: invalid.reason };
   const startedAt = Date.now();
   const identifiers = [];
-  // 设备名在不同固件上参数名不同（marketname 有的板子没有），多取几个候选做 UI 匹配。
-  for (const param of ['const.product.name', 'const.product.model', 'const.product.marketname', 'const.product.marketName', 'const.product.brand']) {
-    const value = await deviceParam(hdc, dutSn, param);
+  for (const param of ['const.product.name', 'const.product.model', 'const.product.brand']) {
+    const value = await deviceParam(hdc, dutSn, param).catch(() => '');
     if (value && value.length >= 2 && !identifiers.includes(value)) identifiers.push(value);
   }
   let dcctLaunched = false;
@@ -348,8 +349,9 @@ async function runTestBoxPrecheck({ hdc, boxSn, dutSn, dutSns, workspace, deadli
           problems.push(`ping 盒子 ${boxIp} 不通（若宿主防火墙拦 ICMP 可忽略此项，继续等配对）`);
         }
         const layout = await dumpBoxLayout(hdc, boxSn, workspace);
-        if (parseUiLayoutForIdentifiers(layout, identifiers)) {
-          return { connected: true, reason: `盒子 dcct 已显示被测设备（${identifiers.join(' / ')}）`, boxIp, dutIp };
+        // 配网动效提示（不再阻塞等待标识匹配——预检通过即跑 DCTS，连接由测试自身验证）。
+        if (dcctLaunched) {
+          return { connected: true, reason: `预检通过（盒子 ${boxIp} · 被测设备 ${dutIp} · 同网段 · ping ✓），dcct 已拉起`, boxIp, dutIp };
         }
         if (!dcctLaunched && await boxHasDcct(hdc, boxSn)) {
           dcctLaunched = true;
@@ -363,7 +365,7 @@ async function runTestBoxPrecheck({ hdc, boxSn, dutSn, dutSns, workspace, deadli
         }
         lastStatus = problems.length > 0
           ? problems.join('；')
-          : `盒子 ${boxIp} 与被测设备 ${dutIp} 同网段，等待 dcct 界面出现被测设备（${identifiers.join(' / ')}）…`;
+          : `盒子 ${boxIp} 与被测设备 ${dutIp} 同网段，等待 dcct 配对完成…`;
         onDetail?.(`盒子连通预检 · 剩余 ${remaining}s · ${lastStatus}`);
         await sleep(BOX_POLL_INTERVAL_MS);
         continue;
@@ -467,9 +469,10 @@ async function doRun(args) {
     }
     // 只校验将要执行的套件（--suites 过滤后不必要求其它套件也存在）。
     for (const step of plan) {
-      const suiteDir = path.join(testcaseRoot, step.suite);
+      const dirName = step.suite === 'hats-hdf' ? 'hats' : step.suite;
+      const suiteDir = path.join(testcaseRoot, dirName);
       const config = path.join(suiteDir, 'config', 'user_config.xml');
-      if (!await isDirectory(suiteDir)) throw new TestFlowError(`测试用例路径下没有 ${step.suite} 套件目录：${suiteDir}`);
+      if (!await isDirectory(suiteDir)) throw new TestFlowError(`测试用例路径下没有 ${dirName} 套件目录：${suiteDir}`);
       if (!await isFile(config)) throw new TestFlowError(`缺少套件配置文件：${config}`);
     }
     const minSetDir = minSetDirName ? path.join(minSetParent, minSetDirName) : '';
@@ -482,8 +485,17 @@ async function doRun(args) {
       if (step.mode !== 'list' || overrideModules.length > 0) continue;
       const file = path.join(minSetDir, step.minFile);
       if (!await isFile(file)) throw new TestFlowError(`缺少最小测试集清单：${file}`);
-      const modules = parseRunListLine(await fs.readFile(file, 'utf8'));
+      let modules = parseRunListLine(await fs.readFile(file, 'utf8'));
       if (modules.length === 0) throw new TestFlowError(`最小测试集清单为空：${file}`);
+      // HATS 主轮剔除 HDF 模块；HATS-HDF 增量轮只跑 HDF 模块。
+      if (step.suite === 'hats' && screen === 'yes') {
+        if (step.hdfOnly) {
+          modules = filterHdfModules(modules);
+          if (modules.length === 0) { step.skipReason = '无 HDF 模块'; continue; }
+        } else {
+          modules = excludeHdfModules(modules);
+        }
+      }
       step.modules = modules;
     }
 
@@ -491,16 +503,18 @@ async function doRun(args) {
     // ssts/dcts 单机执行：这两套的 user_config 只写第一台 SN。
     const stepSns = (step) => (step.singleDevice ? sns.slice(0, 1) : sns);
     for (const step of plan) {
-      const templatePath = path.join(testcaseRoot, step.suite, 'config', 'user_config.xml');
+      const dirName = step.suite === 'hats-hdf' ? 'hats' : step.suite;
+      const templatePath = path.join(testcaseRoot, dirName, 'config', 'user_config.xml');
       const generated = buildUserConfig(await fs.readFile(templatePath, 'utf8'), stepSns(step));
-      await fs.writeFile(path.join(testcaseRoot, step.suite, 'config', 'user_config.dsh-auto.xml'), generated, 'utf8');
+      await fs.writeFile(path.join(testcaseRoot, dirName, 'config', 'user_config.dsh-auto.xml'), generated, 'utf8');
     }
 
     const describePlan = () => plan.map((step) => {
       const scope = step.singleDevice ? `单机 ${sns[0].slice(-6)}` : `${sns.length} 台并行`;
+      const hdfTag = step.hdfOnly ? 'HDF增量 ' : '';
       return step.mode === 'task'
         ? `SSTS 全测（run ssts · ${scope}）`
-        : `${suiteArchiveName(step.suite)} 最小集（${step.modules.length} 模块 · ${scope}）`;
+        : `${hdfTag}${suiteArchiveName(step.suite)} 最小集（${step.modules.length} 模块 · ${scope}）`;
     }).join(' → ');
 
     if (args['dry-run']) {
@@ -549,7 +563,7 @@ async function doRun(args) {
     for (let stepIndex = 0; stepIndex < plan.length; stepIndex += 1) {
       if (stopped) return 1;
       const step = plan[stepIndex];
-      const suiteDir = path.join(testcaseRoot, step.suite);
+      const suiteDir = path.join(testcaseRoot, step.suite === 'hats-hdf' ? 'hats' : step.suite);
       let round = 1;
       // 补测轮固定走 -tf 清单（含 ssts：`run -l <失败模块>` 与 `run -tf` 等价）。
       let useList = step.mode === 'list';
@@ -616,10 +630,11 @@ async function doRun(args) {
           done: value.started,
           total: suiteTotal || 0,
         }));
+        const suiteLabel = step.hdfLabel || suiteArchiveName(step.suite);
         const describeRound = (detail) => detail
           || (round > 1
-            ? `${suiteArchiveName(step.suite)} 补测第 ${round - 1} 轮 · ${pendingModules.length} 模块`
-            : `${suiteArchiveName(step.suite)} 第 ${round} 轮`);
+            ? `${suiteLabel} 补测第 ${round - 1} 轮 · ${pendingModules.length} 模块`
+            : `${suiteLabel} 第 ${round} 轮`);
         let lastEmit = 0;
         const emitTestProgress = (detail, force = false) => {
           const now = Date.now();

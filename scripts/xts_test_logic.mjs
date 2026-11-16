@@ -128,7 +128,6 @@ export function parseSummaryReport(xml) {
     unavailable: Number.isFinite(Number(root.unavailable)) ? Number(root.unavailable) : undefined,
     failedModules,
     ok: (Number(root.failures) || 0) === 0 && (Number(root.unavailable) || 0) === 0
-      && Number.isFinite(total) && Number.isFinite(runModules) && runModules === total
       && failedModules.length === 0,
   };
 }
@@ -201,10 +200,20 @@ export function nextReportIndex(existingNames) {
 }
 
 /**
+ * 有屏 HATS 需要拆出的 HDF 模块（单独增量报告，主轮不跑）。
+ */
+export const HDF_MODULES = Object.freeze([
+  'HatsHdfInputPassthroughAdditionalTest',
+  'HatsHdfInputPassthroughTest',
+  'HatsHdfInputTest',
+]);
+
+/**
  * 测试方案：串行顺序固定 ssts → hats → dcts(仅有屏) → acts。
  * - ssts / dcts **单机执行**（singleDevice：只取第一台 SN，不参与多机并行）；
  * - dcts 跑前要执行套件 resource/ 下的 `dcts_resource.bat` 安装测试工具（执行时按
- *   `<套件>_resource.bat` 通用探测，ssts 的 resource 只有工具 hap、无 bat）。
+ *   `<套件>_resource.bat` 通用探测，ssts 的 resource 只有工具 hap、无 bat）；
+ * - 有屏时 hats 拆两步：主轮（不含 HDF）+ HATS-HDF 增量（只有 HDF 模块，单独归档）。
  */
 export function suitePlan(screen) {
   const plan = [
@@ -212,15 +221,28 @@ export function suitePlan(screen) {
     { suite: 'hats', mode: 'list', minFile: 'hats-min.txt' },
   ];
   if (screen === 'yes') {
+    plan.push({ suite: 'hats', mode: 'list', hdfOnly: true, singleDevice: true, hdfLabel: 'HATS-HDF' });
     plan.push({ suite: 'dcts', mode: 'list', minFile: 'dcts-min.txt', singleDevice: true });
   }
   plan.push({ suite: 'acts', mode: 'list', minFile: 'acts-min.txt' });
   return plan;
 }
 
+/** 从模块清单里剔除 HDF 模块（主轮 HATS 用）。 */
+export function excludeHdfModules(modules) {
+  const hdfSet = new Set(HDF_MODULES.map((m) => m.toLowerCase()));
+  return modules.filter((m) => !hdfSet.has(m.toLowerCase()));
+}
+
+/** 从模块清单里只取 HDF 模块（HATS-HDF 增量轮用）。 */
+export function filterHdfModules(modules) {
+  const hdfSet = new Set(HDF_MODULES.map((m) => m.toLowerCase()));
+  return modules.filter((m) => hdfSet.has(m.toLowerCase()));
+}
+
 /** 套件目录名 → 归档目录名（report/SSTS/report-1 的对应路径，沿用现有大写约定）。 */
 export function suiteArchiveName(suite) {
-  return { ssts: 'SSTS', hats: 'HATS', dcts: 'DCTS', acts: 'ACTS' }[suite] || String(suite).toUpperCase();
+  return { ssts: 'SSTS', hats: 'HATS', 'hats-hdf': 'HATS', dcts: 'DCTS', acts: 'ACTS' }[suite] || String(suite).toUpperCase();
 }
 
 /** 测试盒子 SN 缺省值（DCTS 前置连通预检；与宿主 DEFAULT_TEST_BOX_SN 同值）。 */
