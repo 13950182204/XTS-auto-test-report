@@ -390,7 +390,16 @@ async function automateDcctPairing({ hdc, boxSn, dutSn, dutIp, workspace, deadli
     if (value && value.length >= 2 && !dutIdentifiers.includes(value)) dutIdentifiers.push(value);
   }
 
-  // —— 1. 拉起 dcct on box ——
+  // —— 1. 唤醒并解锁盒子屏幕（锁屏时 uitest dump 到的是锁屏而非 dcct UI） ——
+  onDetail?.('唤醒并解锁盒子屏幕…');
+  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'wakeup'], 10000).catch(() => {});
+  await sleep(1000);
+  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'uitest', 'uiInput', 'swipe', '400', '1100', '400', '300', '300'], 10000).catch(() => {});
+  await sleep(2000);
+  // 保持屏幕常亮
+  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'setmode', '602'], 10000).catch(() => {});
+
+  // —— 2. 拉起 dcct on box ——
   onDetail?.('正在盒子上拉起 dcct 应用…');
   await hdcCommand(hdc, ['-t', boxSn, 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 15000).catch(() => undefined);
   await sleep(3000);
