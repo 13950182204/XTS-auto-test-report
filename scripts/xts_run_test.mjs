@@ -840,6 +840,22 @@ async function doRun(args) {
             if (!await waitForDeviceOnline(hdc, suiteSns[0])) {
               throw new TestFlowError(`资源安装后设备 ${suiteSns[0]} 超过 3 分钟未回线（${path.basename(resourceBat)} 会重启设备），已停止。`);
             }
+            // DCTS 重启后 softbus 服务断了——重新启动（对应 service.bat / soket_service.bat）
+            if (step.suite === 'dcts') {
+              emitTestProgress(`重启 softbus 服务（dsoftbusTest / socketdsoftbusTest）…`, true);
+              await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'nohup', '/data/local/tmp/dsoftbusTest', '>', '/dev/null', '2>&1', '&'], 10000).catch(() => {});
+              await sleep(2000);
+              await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'nohup', '/data/local/tmp/socketdsoftbusTest', '>', '/dev/null', '2>&1', '&'], 10000).catch(() => {});
+              await sleep(2000);
+              // 拉起 DUT 上的 dcct（让 DUT 可被发现）
+              const dutHasDcct = await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'bm', 'dump', '-a'], 10000).catch(() => undefined);
+              if (dutHasDcct && dutHasDcct.code === 0 && dutHasDcct.stdout.includes(DCCT_BUNDLE_NAME)) {
+                await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 10000).catch(() => {});
+                emitTestProgress('DUT dcct 已拉起', true);
+              }
+              emitTestProgress(`softbus 服务已重启，DUT dcct 已就绪`, true);
+              await sleep(3000);
+            }
             emitTestProgress(`设备 ${suiteSns[0]} 已回线，开始 ${suiteArchiveName(step.suite)} 测试。`, true);
           }
         }
