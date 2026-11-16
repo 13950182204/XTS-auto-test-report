@@ -396,8 +396,12 @@ async function automateDcctPairing({ hdc, boxSn, dutSn, dutIp, workspace, deadli
   await sleep(1000);
   await hdcCommand(hdc, ['-t', boxSn, 'shell', 'uitest', 'uiInput', 'swipe', '400', '1100', '400', '300', '300'], 10000).catch(() => {});
   await sleep(2000);
-  // 保持屏幕常亮
+  // 保持屏幕常亮（602 = 常亮模式）
   await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'setmode', '602'], 10000).catch(() => {});
+  // 每次交互前唤醒一次，防止配对过程中屏幕再次锁定
+  const wakeBox = async () => {
+    await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'wakeup'], 5000).catch(() => {});
+  };
 
   // —— 2. 拉起 dcct on box ——
   onDetail?.('正在盒子上拉起 dcct 应用…');
@@ -429,6 +433,7 @@ async function automateDcctPairing({ hdc, boxSn, dutSn, dutIp, workspace, deadli
   let dutClicked = false;
   const dutDeadline = Date.now() + Math.min(deadlineMs, 120000);
   while (Date.now() < dutDeadline && !dutClicked) {
+    await wakeBox();
     const results = await uitestFindByText(hdc, boxSn, dutIdentifiers, 'box-dut-list').catch(() => []);
     if (results.length > 0) {
       await uitestClick(hdc, boxSn, results[0].x, results[0].y);
@@ -487,6 +492,7 @@ async function automateDcctPairing({ hdc, boxSn, dutSn, dutIp, workspace, deadli
   onDetail?.('等待连接建立…');
   const connectDeadline = Date.now() + 30000;
   while (Date.now() < connectDeadline) {
+    await wakeBox();
     const layout = await dumpBoxLayout(hdc, boxSn, workspace).catch(() => '');
     if (layout && /已连接|connected|连接成功/i.test(layout)) {
       return { connected: true, reason: 'dcct 配对成功，盒子与被测设备已连接' };
