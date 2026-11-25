@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>XTS 报告上传 · 布局优化 Demo（全页面 · A/B 对比）</title>
+<style>
+/* ===== token：与 src/styles.css 同源（值未改动），新增刻度变量 ===== */
+:root{
+  --mono:ui-monospace,Consolas,monospace;
+  --radius:10px;--radius-sm:8px;--sidebar:216px;
+  --accent-grad:linear-gradient(135deg,var(--business),var(--primary));
+  --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:24px;--s-6:32px;
+  --fs-1:11px;--fs-2:12px;--fs-3:13px;--fs-4:15px;--fs-5:19px;
+  --ease:cubic-bezier(.25,.1,.25,1);
+  --content-max:1040px;
+  --panel-scroll-max:340px;
+  --col-side:340px;
+}
+:root,:root[data-theme='dark']{
+  --bg:#141519;--bg-2:#1c1d24;--bg-3:#22242c;
+  --border:rgba(255,255,255,.16);--border-soft:rgba(255,255,255,.09);
+  --soft:rgba(255,255,255,.05);--hover:rgba(255,255,255,.08);
+  --text:#e6e8ee;--text-2:#b4b8c4;--text-3:#8a8f9e;
+  --primary:#4f7cf0;--primary-hover:#3f6ae0;--on-primary:#fff;
+  --business:#5b8def;--success:#3fb96f;--warn:#d9a23b;--danger:#e05656;
+  --card-shadow:0 8px 24px rgba(0,0,0,.45);
+}
+:root[data-theme='light']{
+  --bg:#f2f4f8;--bg-2:#ffffff;--bg-3:#eef1f6;
+  --border:rgba(15,23,42,.18);--border-soft:rgba(15,23,42,.09);
+  --soft:rgba(15,23,42,.04);--hover:rgba(15,23,42,.06);
+  --text:#1f2329;--text-2:#475569;--text-3:#8892a0;
+  --primary:#2563eb;--primary-hover:#1d4ed8;--on-primary:#fff;
+  --business:#4176e6;--success:#16a34a;--warn:#d97706;--danger:#dc2626;
+  --card-shadow:0 6px 18px rgba(15,23,42,.08);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:13px;line-height:1.55}
+
+/* ===== demo 顶栏（不属于应用本体） ===== */
+.demo-bar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 16px;background:var(--bg-3);border-bottom:1px solid var(--border);box-shadow:0 4px 16px rgba(0,0,0,.25)}
+.demo-bar>b{font-size:12.5px}
+.demo-bar__note{font-size:11px;color:var(--text-3)}
+.demo-bar__views{margin-left:auto;display:flex;gap:6px}
+.demo-bar button{height:26px;padding:0 11px;font-size:11.5px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text-2);font:inherit;font-size:12px;cursor:pointer}
+.demo-bar button.on{background:var(--primary);border-color:transparent;color:var(--on-primary);font-weight:600}
+.demo-bar__pages{display:flex;flex-wrap:wrap;gap:5px;width:100%}
+.demo-bar__pages button{height:22px;padding:0 9px;font-size:11px}
+#stage{padding:92px 18px 18px;display:grid;gap:26px;justify-items:center}
+#stage[data-view='a'] #mockB{display:none}
+#stage[data-view='b'] #mockA{display:none}
+#stage[data-view='ab']{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.mock{display:grid;gap:8px;min-width:0}
+.mock__label{font-size:12px;color:var(--text-2);line-height:1.6}
+.mock__label b{color:var(--text);font-size:12.5px}
+.mock__scale{min-width:0}
+@media (max-width:1080px){#stage[data-view='ab']{grid-template-columns:1fr}}
+
+/* ===== 模拟应用窗口 ===== */
+.win{width:1280px;height:860px;display:grid;grid-template-columns:var(--sidebar) 1fr;background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--card-shadow);transform-origin:top left}
+.win--login{grid-template-columns:1fr}
+.win--login .sidebar{display:none}
+.win--login .taskbar{display:none}
+.win--login .content{max-width:none}
+.page[data-page='login'].on{padding:0;gap:0;grid-template-rows:minmax(0,1fr);max-width:none}
+.page[data-page='login'].on .login{height:100%;min-height:0}
+.sidebar{display:flex;flex-direction:column;background:var(--bg-2);border-right:1px solid var(--border-soft);padding:18px 12px}
+.sidebar__brand{display:flex;align-items:center;gap:10px;padding:2px 8px 18px;border-bottom:1px solid var(--border-soft);margin-bottom:14px}
+.sidebar__logo{width:34px;height:34px;border-radius:10px;background:var(--accent-grad);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff}
+.sidebar__brand-name{display:grid;gap:1px}
+.sidebar__brand-name b{font-size:13px}
+.sidebar__brand-name span{font-size:10.5px;color:var(--text-3)}
+.sidebar__nav{display:grid;gap:4px}
+.sidebar__item{display:flex;align-items:center;gap:10px;padding:9px 12px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-2);font:inherit;font-size:13px;font-weight:500;cursor:pointer;text-align:left}
+.sidebar__item:hover{background:var(--hover);color:var(--text)}
+.sidebar__item.active{background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--text)}
+.sidebar__item.active .ico{color:var(--primary)}
+.sidebar__item .ico{width:18px;text-align:center;flex:none}
+.sidebar__foot{margin-top:auto;padding:10px 8px 0;border-top:1px solid var(--border-soft);font-size:11px;color:var(--text-3);display:grid;gap:3px}
+.sidebar__account{font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ===== 主区：A 页面滚动 / B 整页锁定 ===== */
+.mainscroll{min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.mainscroll__inner{flex:1;overflow-y:auto;overscroll-behavior:contain}
+.content{padding:var(--s-4) var(--s-5) var(--s-5);display:block;min-width:0;width:100%;max-width:var(--content-max);margin-inline:auto}
+.content--B{max-width:none;height:100%;display:flex;flex-direction:column;padding-bottom:var(--s-4)}
+
+/* 页面容器：同一份 HTML，方向差异交给这里 */
+.page{display:none;min-width:0;gap:var(--s-4)}
+.page.on{display:grid;align-content:start}
+.content--A .page.on{grid-template-columns:1fr;padding-bottom:var(--s-6)}
+.content--B .page.on{flex:1;min-height:0;grid-template-rows:auto minmax(0,1fr)}
+
+/* ===== 一行页头 ===== */
+.page-head--bar{display:flex;align-items:center;gap:var(--s-3);min-width:0}
+.page-head--bar h1{margin:0;font-size:var(--fs-5);font-weight:650;display:flex;align-items:center;gap:10px;flex:none}
+.page-head--bar h1::before{content:'';width:9px;height:9px;border-radius:999px;background:var(--accent-grad);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
+.page-head__meta{font-size:var(--fs-1);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.page-head__actions{margin-left:auto;display:flex;gap:var(--s-2);flex:none}
+
+/* ===== 双栏工作台（B 专用；A 折叠为单列） ===== */
+.workbench{display:grid;grid-template-columns:minmax(0,1fr) var(--col-side);gap:var(--s-4);min-height:0}
+.workbench--single{grid-template-columns:minmax(0,1fr)}
+.workbench__main{display:grid;gap:var(--s-4);align-content:start;min-width:0;overflow-y:auto;overscroll-behavior:contain;padding-right:2px}
+.workbench__side{display:grid;grid-template-rows:auto minmax(0,1fr);gap:var(--s-4);min-height:0}
+.content--A .workbench{grid-template-columns:1fr}
+.content--A .workbench__main{overflow:visible;padding-right:0}
+
+/* ===== taskbar：吸顶单行 ===== */
+.taskbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px 14px;padding:9px 14px;border:1px solid var(--border-soft);border-left:3px solid var(--business);border-radius:var(--radius);background:color-mix(in srgb,var(--bg-2) 92%,transparent);backdrop-filter:blur(6px);font-size:12.5px}
+.taskbar.idle{border-left-color:var(--success)}
+.taskbar__label{font-weight:600;flex:none}
+.taskbar .bar{flex:1;min-width:160px}
+.taskbar__meta{color:var(--text-3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+/* ===== 通用件（与现网一致） ===== */
+.panel{display:grid;gap:10px;padding:14px 16px;border:1px solid var(--border-soft);border-radius:var(--radius);background:var(--bg-2);min-width:0;align-content:start}
+.panel--fill{min-height:0}
+.panel--fill{min-height:0;grid-template-rows:auto minmax(0,1fr)}
+.panel-head{display:flex;align-items:center;gap:4px 12px;padding-bottom:8px;border-bottom:1px solid var(--border-soft)}
+.panel__scroll-wrap{overflow-y:auto;min-height:0;display:grid;gap:7px;padding-right:2px}
+.progress-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:11.5px;color:var(--text-2)}
+.row-actions{margin-left:auto;display:inline-flex;gap:6px;flex:none}
+.panel-title{font-size:13px;font-weight:650;display:inline-flex;align-items:center;gap:7px}
+.panel-title::before{content:'';width:6px;height:6px;border-radius:2px;background:var(--business);opacity:.85}
+.panel-meta{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.panel-head__actions{margin-left:auto;display:inline-flex;gap:6px;flex:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px 14px;align-items:start}
+.field{display:grid;gap:5px;min-width:0}
+.field--wide{grid-column:1/-1}
+.label{font-size:12px;font-weight:550;color:var(--text-2)}
+.hint{font-size:11px;line-height:1.55;color:var(--text-3);overflow-wrap:anywhere}
+.input{width:100%;min-height:32px;padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--soft);color:inherit;font:inherit;font-size:12.5px}
+.input--mono{font-family:var(--mono);font-size:11.5px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{height:31px;padding:0 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text);font:inherit;font-size:12.5px;font-weight:550;cursor:pointer}
+.btn--primary{border-color:transparent;background:var(--primary);color:var(--on-primary);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.btn--danger{border-color:color-mix(in srgb,var(--danger) 55%,transparent);color:var(--danger)}
+.btn--small{height:24px;padding:0 10px;font-size:11.5px;border-radius:6px}
+.note{margin:0;font-size:11.5px;line-height:1.6;color:var(--text-3);overflow-wrap:anywhere}
+.empty{margin:0;padding:12px;border:1px dashed var(--border-soft);border-radius:var(--radius-sm);font-size:12px;color:var(--text-3);text-align:center}
+.muted{color:var(--text-3)}
+.checkbox{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);cursor:pointer}
+.checkbox input{accent-color:var(--primary)}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+/* ===== 列表与行（紧凑化） ===== */
+.list{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.list-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;padding:5px 12px;border-radius:var(--radius-sm);background:var(--bg-3);font-size:10.5px;font-weight:600;color:var(--text-3);letter-spacing:.04em}
+.row{display:grid;gap:3px;padding:8px 12px;border:1px solid var(--border-soft);border-left:3px solid var(--border);border-radius:var(--radius-sm);background:var(--soft)}
+.row--blocked{border-left-color:var(--danger)}
+.row--ready{border-left-color:var(--success)}
+.row--running{border-left-color:var(--business)}
+.row--warn{border-left-color:var(--warn)}
+.row-top{display:flex;align-items:center;gap:8px;min-width:0}
+.row-top .chip{flex:none}
+.name{font-size:12.5px;font-weight:550;min-width:0}
+.row-top .bar{flex:1;min-width:60px}
+.row-top .pct{font-size:11px;color:var(--text-2);flex:none;min-width:34px;text-align:right}
+.path{margin:0;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--text-3)}
+.problem{margin:0;font-size:11.5px;line-height:1.5;color:var(--danger);overflow-wrap:anywhere}
+.chip{display:inline-flex;align-items:center;gap:5px;height:19px;padding:0 8px;border-radius:999px;background:rgba(127,127,127,.14);font-size:10.5px;font-weight:650;white-space:nowrap}
+.chip::before{content:'';width:5px;height:5px;border-radius:999px;background:currentColor;opacity:.75;flex:none}
+.chip--ok{color:var(--success);background:color-mix(in srgb,var(--success) 13%,transparent)}
+.chip--warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.chip--blocked{color:var(--danger);background:color-mix(in srgb,var(--danger) 13%,transparent)}
+.chip--acts{color:var(--business);background:color-mix(in srgb,var(--business) 13%,transparent)}
+.chip--neutral{color:var(--text-2)}
+.chip--sel{color:var(--business);border:1px solid var(--business)}
+.bar{height:8px;border-radius:999px;background:rgba(127,127,127,.18);overflow:hidden}
+.bar>div{height:100%;border-radius:inherit;background:var(--accent-grad);transition:width .25s ease}
+.bar>div.danger{background:linear-gradient(90deg,var(--danger),color-mix(in srgb,var(--danger) 65%,#000))}
+.bar--slim{height:5px}
+.status{display:grid;gap:2px;padding:9px 12px;border-left:3px solid var(--border);border-radius:var(--radius-sm);background:var(--soft);font-size:12px;line-height:1.55}
+.status--ok{border-left-color:var(--success);background:color-mix(in srgb,var(--success) 8%,transparent)}
+.status--error{border-left-color:var(--danger);background:color-mix(in srgb,var(--danger) 8%,transparent)}
+
+/* ===== picker / 设备 ===== */
+.picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:8px}
+.pick-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-soft);border-radius:var(--radius-sm);background:var(--soft);cursor:pointer}
+.pick-item:hover{background:var(--hover)}
+.pick-item.sel{border-color:var(--business);background:color-mix(in srgb,var(--business) 9%,transparent)}
+.pick-body{flex:1;min-width:0;display:grid;gap:1px}
+.pick-title{font-size:12.5px;font-weight:500}
+.pick-sub{font-size:10.5px;color:var(--text-3);font-family:var(--mono)}
+.suite-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.dot{width:8px;height:8px;border-radius:999px;background:var(--text-3);flex:none}
+.dot--on{background:var(--success);animation:softPulse 2.2s var(--ease) infinite}
+.dot--idle{background:var(--business)}
+@keyframes softPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--success) 45%,transparent)}60%{box-shadow:0 0 0 5px transparent}}
+.dev-input-row{display:flex;align-items:center;gap:10px;min-width:0}
+.dev-input-row .input{flex:1}
+.dev-input-row .chip,.dev-input-row .dot{flex:none}
+
+/* ===== 流水线 ===== */
+.pipe{display:flex;align-items:stretch;margin:2px 0}
+.pipe-stage{flex:1;display:grid;gap:3px;padding:9px 11px;border:1px solid var(--border-soft);border-top:2px solid transparent;border-radius:var(--radius-sm);background:var(--soft);position:relative;min-width:0}
+.pipe-stage+.pipe-stage{margin-left:18px}
+.pipe-stage+.pipe-stage::before{content:'';position:absolute;left:-13px;top:50%;width:6px;height:6px;border-top:1.5px solid var(--text-3);border-right:1.5px solid var(--text-3);transform:translateY(-50%) rotate(45deg);opacity:.55}
+.pipe-name{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:650;color:var(--text-2)}
+.pipe-step{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:5px;background:rgba(127,127,127,.18);font-size:9.5px;font-weight:650;color:var(--text-2);flex:none}
+.pipe-sub{font-size:10.5px;color:var(--text-3);line-height:1.45}
+.pipe-stage--done{border-top-color:var(--success)}
+.pipe-stage--done .pipe-name{color:var(--success)}
+.pipe-stage--running{border-top-color:var(--business);background:color-mix(in srgb,var(--business) 7%,transparent)}
+.pipe-stage--running .pipe-name{color:var(--business)}
+.pipe-stage--skip{border-top-color:var(--warn)}
+.pipe-stage--skip .pipe-name{color:var(--warn)}
+.pipe-stage--fail{border-top-color:var(--danger)}
+.pipe-stage--fail .pipe-name{color:var(--danger)}
+.dev-progress{display:grid;gap:8px}
+.dev-progress__row{display:grid;gap:4px;padding:8px 12px;border:1px solid var(--border-soft);border-radius:var(--radius-sm);background:var(--soft)}
+.dev-progress__top{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:550}
+.dev-progress__top .bar{flex:1;min-width:60px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(127,127,127,.3);border-top-color:var(--text);animation:spin .9s linear infinite;flex:none}
+
+/* ===== 概览卡片 ===== */
+.overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.cap-card{display:grid;gap:8px;padding:16px;border:1px solid var(--border-soft);border-radius:var(--radius);background:var(--bg-2);cursor:pointer;text-align:left;font:inherit;color:inherit}
+.cap-card:hover{border-color:color-mix(in srgb,var(--primary) 45%,transparent)}
+.cap-card h3{margin:0;font-size:14px;font-weight:650;display:flex;align-items:center;gap:8px}
+.cap-card h3::before{content:'';width:7px;height:7px;border-radius:2px;background:var(--accent-grad)}
+.cap-card p{margin:0;font-size:12px;color:var(--text-2);line-height:1.6}
+.cap-card .cap-foot{font-size:11px;color:var(--text-3)}
+
+/* ===== 设置主题卡 ===== */
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.theme-card{display:grid;gap:8px;justify-items:center;padding:14px;border:1px solid var(--border-soft);border-radius:var(--radius);background:var(--bg-2);cursor:pointer;font:inherit;color:inherit}
+.theme-card--active{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 25%,transparent)}
+.theme-swatch{width:100%;height:52px;border-radius:var(--radius-sm);border:1px solid var(--border-soft)}
+.theme-label{font-size:12.5px;font-weight:600}
+
+/* ===== 登录页 ===== */
+.login{min-height:100%;display:flex;align-items:center;justify-content:center;padding:var(--s-5);background:radial-gradient(1200px 600px at 20% -10%,color-mix(in srgb,var(--primary) 14%,transparent),transparent),var(--bg)}
+.login__card{width:420px;max-width:100%;display:grid;gap:14px;padding:26px 28px;border:1px solid var(--border-soft);border-radius:12px;background:var(--bg-2);box-shadow:var(--card-shadow)}
+.login__brand{display:flex;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border-soft)}
+.login__brand-name{display:grid;gap:2px}
+.login__brand-name b{font-size:15px}
+.login__brand-name span{font-size:11.5px;color:var(--text-3)}
+.login__remember{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);cursor:pointer}
+.login__remember input{accent-color:var(--primary)}
+/* 登录页撑满整窗（覆盖方向骨架规则） */
+.win--login .content{max-width:none;padding:0;margin-inline:0}
+.win--login .mainscroll__inner{display:flex;flex-direction:column}
+.win--login .page.on{flex:1;min-height:0;padding:0;gap:0}
+.win--login .page.on .login{height:100%;min-height:0}
+</style>
+</head>
+<body>
+<header class="demo-bar">
+  <b>XTS 报告上传 · 布局优化 Demo</b>
+  <span class="bar__note">视觉与现网同源，差异只在布局骨架 · 左侧页面按钮同步切换两个方向 · 窗口内侧栏也可独立切换</span>
+  <div class="demo-bar__views">
+    <button data-view="a">方向 A · 单列收敛</button>
+    <button data-view="b" class="on">方向 B · 双栏工作台</button>
+    <button data-view="ab">A / B 同屏</button>
+  </div>
+  <button id="themeBtn">切换浅色</button>
+  <div class="demo-bar__pages" id="pageBar"></div>
+</header>
+
+<main id="stage" data-view="b">
+  <section class="mock" id="mockA">
+    <div class="mock__label"><b>方向 A「单列 · 收敛」</b> — 保持现有单列骨架：页头一行化 + 主动作上提；taskbar 吸顶；内容限宽 1040px 居中；长列表 panel 内滚 + 表头吸附；长路径/SN 单行截断（hover 看全文）。</div>
+    <div class="mock__scale">
+      <div class="win" id="winA" data-page="test">
+        <aside class="sidebar" data-nav></aside>
+        <div class="mainscroll"><div class="mainscroll__inner">
+          <div class="taskbar">
+            <span class="taskbar__label">XTS 自动测试进行中</span>
+            <div class="bar"><div style="width:37%"></div></div>
+            <span class="taskbar__meta">HATS 第 1 轮 · 已开始 12 模块（2 台设备并行）</span>
+          </div>
+          <div class="content content--A" id="contentA"></div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mock" id="mockB">
+    <div class="mock__label"><b>方向 B「双栏 · 工作台」</b> — 窗口高度锁定（app-like 整页不滚）：左主列 = 配置 / 表单 / 主动作；右状态列 340px = 进度 / 流水线 / 批次（各自内滚，运行状态常驻可见）。&lt;1200px 自动回落单列。</div>
+    <div class="mock__scale">
+      <div class="win" id="winB" data-page="test">
+        <aside class="sidebar" data-nav></aside>
+        <div class="mainscroll"><div class="mainscroll__inner" style="overflow:hidden;display:flex;flex-direction:column">
+          <div class="taskbar" style="position:static">
+            <span class="taskbar__label">XTS 自动测试进行中</span>
+            <div class="bar"><div style="width:37%"></div></div>
+            <span class="taskbar__meta">HATS 第 1 轮 · 已开始 12 模块（2 台设备并行）</span>
+          </div>
+          <div class="content content--B" id="contentB"></div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ===== 页面模板：A/B 共用同一份 HTML，方向差异由 CSS 作用域（.content--A / .content--B）决定 ===== */
+const NAV = [
+  ['overview','◆','概览'], ['devices','⇄','测试盒子'], ['materials','▤','评测资料'],
+  ['test','▶','XTS 自动测试'], ['mirror','⬆','镜像固件上传'], ['waiver','✎','豁免资料'], ['settings','⚙','设置'],
+];
+
+const head = (title, meta, actions) => `
+  <div class="page-head--bar">
+    <h1>${title}</h1>
+    <span class="page-head__meta">${meta}</span>
+    <span class="page-head__actions">${actions || ''}</span>
+  </div>`;
+
+const batchPanel = (scrollStyle, extraMeta) => `
+  <div class="panel panel--fill">
+    <div class="panel-head"><span class="panel-title">豁免批次进度</span><span class="panel-meta">12/18${extraMeta ? ' · ' + extraMeta : ''}</span><span class="panel-head__actions"><button class="btn btn--small">刷新</button></span></div>
+    <div class="panel__scroll-wrap" style="${scrollStyle}">
+      <div class="list-head"><span>任务</span><span style="margin-left:auto">进度</span></div>
+      <div class="list js-batch-rows"></div>
+    </div>
+  </div>`;
+
+const PAGES = {
+  overview: () => `
+    ${head('概览', '本地任务 执行中 · 2 台设备在线 · 测试盒子在线', '<button class="btn btn--small">刷新</button>')}
+    <div class="workbench">
+      <div class="workbench__main">
+        <div class="overview-grid">
+          <button class="cap-card"><h3>评测资料</h3><p>填设备目录 → 预检 → 提交，五步保存到「未提交」，确认提交仍由你在平台点。</p><span class="cap-foot">最近：DH-76AM-HS26A · 第二阶段已保存</span></button>
+          <button class="cap-card"><h3>XTS 自动测试</h3><p>四套用例串行跑完、判卷、补测、归档，一条龙；失败只重跑失败模块。</p><span class="cap-foot">最近：HATS 第 1 轮进行中（2 台设备）</span></button>
+          <button class="cap-card"><h3>镜像固件上传</h3><p>平台已有同名固件自动跳过，实时显示平台原始进度与速率。</p><span class="cap-foot">最近：DH-76BM-HL4-20261121.7z · 100%</span></button>
+          <button class="cap-card"><h3>豁免资料</h3><p>识别目录分类与提交路径，批量保存豁免草稿；zip → pdf → txt 附件优先级。</p><span class="cap-foot">最近：12/18 已保存（未提交）</span></button>
+        </div>
+        <p class="note">三条长任务互不阻塞：测试期间评测资料 / 固件上传 / 豁免照常可用。</p>
+      </div>
+      <div class="workbench__side">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">任务进度</span><span class="panel-meta">kind: xts-test</span></div>
+          <div class="progress-top"><span>XTS 自动测试 · HATS 第 1 轮</span><span>37%</span></div>
+          <div class="bar"><div style="width:37%"></div></div>
+          <div class="dev-progress">
+            <div class="dev-progress__row"><div class="dev-progress__top"><span class="dot dot--on"></span><span class="truncate" title="150100424a4e42345207653128028981">15010042…28028981</span><div class="bar bar--slim"><div style="width:64%"></div></div><span class="pct">12/19</span></div></div>
+            <div class="dev-progress__row"><div class="dev-progress__top"><span class="dot dot--on"></span><span class="truncate" title="150100424a4e42345207654125558999">15010042…5558999</span><div class="bar bar--slim"><div style="width:52%"></div></div><span class="pct">10/19</span></div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">设备与盒子</span></div>
+          <div class="list">
+            <div class="row row--ready"><div class="row-top"><span class="chip chip--ok">盒子</span><span class="name truncate" title="370100654d4d43202010000071dd7b00">37010065…dd7b00 · USB 在线</span></div><p class="path truncate" title="dcct 前台运行 · 192.168.101.231">dcct 前台运行 · 192.168.101.231</p></div>
+            <div class="row row--running"><div class="row-top"><span class="chip chip--acts">DUT ×2</span><span class="name truncate">HATS 并行执行中</span></div><p class="path truncate" title="15010042…28028981 · 15010042…5558999">15010042…28028981 · 15010042…5558999</p></div>
+          </div>
+        </div>
+      </div>
+    </div>`,
+
+  devices: () => `
+    ${head('测试盒子', 'USB 即插即用 · 网络走 hdc tconn · 只确认盒子在线', '')}
+    <div class="workbench">
+      <div class="workbench__main">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">盒子地址</span><span class="panel-meta">SN（USB）或 IP:Port（网络），自动识别</span></div>
+          <div class="dev-input-row">
+            <input class="input input--mono truncate" value="370100654d4d43202010000071dd7b00" title="370100654d4d43202010000071dd7b00">
+            <span class="chip chip--ok">USB · 在线</span>
+            <button class="btn btn--primary">连接</button>
+          </div>
+          <p class="hint">绿点 = 在线；DCTS 前会自动触发盒子与被测设备的配网，无需在此页手动操作。</p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">DCTS 配网指引</span><span class="panel-meta">自动执行 · 无需人工</span></div>
+          <div class="list">
+            <div class="row row--ready"><div class="row-top"><span class="name">1 · 盒子连通预检</span><span class="chip chip--ok">通过</span></div><p class="path truncate" title="盒子 192.168.101.231 · 被测设备 192.168.101.23 · 同网段 · ping ✓">盒子 192.168.101.231 · 被测设备 192.168.101.23 · 同网段 · ping ✓</p></div>
+            <div class="row row--running"><div class="row-top"><span class="name">2 · dcct 自动配对</span><span class="chip chip--acts">执行中</span></div><p class="path truncate" title="勾 Wi-Fi → 允许被发现 → 点击目标设备 → 永远信任 → 输入 PIN">勾 Wi-Fi → 允许被发现 → 点击目标设备 → 永远信任 → 输入 PIN</p></div>
+            <div class="row"><div class="row-top"><span class="name">3 · 连接确认</span><span class="chip">待执行</span></div><p class="path truncate">dcct 显示被测设备后自动开测</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="workbench__side">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">盒子状态</span></div>
+          <div class="list">
+            <div class="row row--ready"><div class="row-top"><span class="dot dot--on"></span><span class="name truncate" title="370100654d4d43202010000071dd7b00">37010065…dd7b00</span><span class="chip chip--ok">在线</span></div><p class="path truncate" title="USB · 192.168.101.231">USB · 192.168.101.231</p></div>
+            <div class="row"><div class="row-top"><span class="dot"></span><span class="name">dcct 应用</span><span class="chip">后台</span></div><p class="path truncate">测试时自动拉起到前台</p></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">被测设备</span><span class="panel-meta">2 台在线</span></div>
+          <div class="list">
+            <div class="row row--running"><div class="row-top"><span class="dot dot--on"></span><span class="name truncate" title="150100424a4e42345207653128028981">15010042…28028981</span><span class="chip chip--acts">忙</span></div></div>
+            <div class="row"><div class="row-top"><span class="dot dot--idle"></span><span class="name truncate" title="150100424a4e42345207654125558999">15010042…5558999</span><span class="chip chip--ok">空闲</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>`,
+
+  materials: () => `
+    ${head('评测资料', '预检通过自动上传固件 · 只保存草稿，绝不代点确认提交',
+      '<button class="btn btn--small">预检</button><button class="btn btn--primary">评测资料提交</button>')}
+    <div class="workbench">
+      <div class="workbench__main">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">申请信息</span><span class="panel-meta">工作簿已识别 · OpenHarmony兼容性申请资料.xlsx</span></div>
+          <div class="grid">
+            <div class="field"><span class="label">账号</span><input class="input" value="imgeeksu@qq.com"></div>
+            <div class="field"><span class="label">密码</span><input class="input" type="password" placeholder="已保存密码，留空则沿用"></div>
+            <div class="field field--wide"><span class="label">设备目录（或批量父目录）</span><input class="input input--mono truncate" value="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A" title="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A"></div>
+            <div class="field"><span class="label">企业联系电话</span><input class="input" value="13950182204"></div>
+            <div class="field"><span class="label">企业邮箱</span><input class="input" value="102438@dnake.com"></div>
+          </div>
+          <div class="actions">
+            <button class="btn">评测资料预检</button>
+            <button class="btn">刷新草稿</button>
+            <button class="btn">平台核验</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">未提交草稿</span><span class="panel-meta">3 条 · 1 条可直接续提交</span></div>
+          <div class="panel__scroll-wrap" style="max-height:190px">
+            <div class="list">
+              <div class="row row--ready"><div class="row-top"><span class="name truncate">OHC822200009009 · DH-76AM-HS26A</span><span class="chip chip--ok">可续提交</span><span class="row-actions"><button class="btn btn--small">评测资料提交</button></span></div><p class="path truncate" title="处理状态：第二阶段已保存 · 上次成功 2026-11-22">处理状态：第二阶段已保存 · 上次成功 2026-11-22</p></div>
+              <div class="row row--warn"><div class="row-top"><span class="name truncate">OHC822200008871 · DH-76BM-HL4</span><span class="chip chip--warn">需人工处理</span><span class="row-actions"><button class="btn btn--small">解除关联</button></span></div><p class="path truncate" title="备注重试：MIRROR_NOT_FOUND（固件未上传）">备注重试：MIRROR_NOT_FOUND（固件未上传）</p></div>
+              <div class="row"><div class="row-top"><span class="name truncate">OHC822200008641 · DH-76BD-KS13A</span><span class="chip">已完成</span><span class="row-actions"><button class="btn btn--small">平台核验</button></span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="workbench__side">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">任务进度</span><span class="panel-meta">已停止</span></div>
+          <div class="progress-top"><span>评测资料提交 · DH-76BM-HL4</span><span>100%</span></div>
+          <div class="bar"><div class="danger" style="width:100%"></div></div>
+          <div class="status status--error">MIRROR_NOT_FOUND：平台镜像库中未找到 DH-76BM-HL4-20261121.7z，请先上传镜像后再选择。</div>
+        </div>
+        ${batchPanel('flex:1;min-height:0', 'DH-76AM-HS26A')}
+      </div>
+    </div>`,
+
+  test: () => `
+    ${head('XTS 自动测试', 'HATS / ACTS 并行 · SSTS / DCTS 单机自动取第一台 · 每轮归档 report/<套件>/report-n',
+      '<button class="btn btn--small btn--danger">停止测试</button><button class="btn btn--primary">开始测试（4 个套件）</button>')}
+    <div class="workbench">
+      <div class="workbench__main">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">测试配置</span><span class="panel-meta">D:\\ohos\\XTS6.1\\testcase · 归档 DH-76AM-HS26A</span></div>
+          <div class="grid">
+            <div class="field field--wide"><span class="label">测试用例路径</span><input class="input input--mono truncate" value="D:\\ohos\\XTS6.1\\testcase（xts-acts 套件根目录，含 ssts/ hats/ dcts/ acts/）"></div>
+            <div class="field field--wide"><span class="label">设备目录（报告归档根）</span><input class="input input--mono truncate" value="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\report\\<ssts|hats|dcts|acts>\\report-n"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">被测设备</span><span class="panel-meta">空闲 4 台 · 已选 2 台</span><span class="panel-head__actions"><button class="btn btn--small">刷新</button></span></div>
+          <div class="picker">
+            <div class="pick-item sel"><span class="dot dot--on"></span><span class="pick-body"><span class="pick-title">设备 · USB</span><span class="pick-sub truncate" title="150100424a4e42345207653128028981 · 192.168.101.38">150100424a4e42345207653128028981 · 192.168.101.38</span></span><span class="chip chip--sel">已选</span></div>
+            <div class="pick-item sel"><span class="dot dot--on"></span><span class="pick-body"><span class="pick-title">设备 · USB</span><span class="pick-sub truncate" title="150100424a4e42345207654125558999">150100424a4e42345207654125558999</span></span><span class="chip chip--sel">已选</span></div>
+            <div class="pick-item"><span class="dot dot--idle"></span><span class="pick-body"><span class="pick-title">设备 · 网络</span><span class="pick-sub truncate" title="192.168.101.23:5555 · 192.168.101.23">192.168.101.23:5555 · 192.168.101.23</span></span><span class="chip">空闲</span></div>
+            <div class="pick-item"><span class="dot dot--idle"></span><span class="pick-body"><span class="pick-title">设备 · USB</span><span class="pick-sub truncate" title="ea010e325333324247102b4ed1988ce7">ea010e325333324247102b4ed1988ce7</span></span><span class="chip">空闲</span></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">执行</span><span class="panel-meta">点选套件，未选中的跳过</span></div>
+          <div class="suite-picker">
+            <div class="pick-item sel"><span class="pick-body"><span class="pick-title">SSTS</span><span class="pick-sub">全测 · 12 模块</span></span></div>
+            <div class="pick-item sel"><span class="pick-body"><span class="pick-title">HATS</span><span class="pick-sub">最小集 · 86 模块</span></span></div>
+            <div class="pick-item sel"><span class="pick-body"><span class="pick-title">DCTS</span><span class="pick-sub">仅有屏 · 21 模块</span></span></div>
+            <div class="pick-item sel"><span class="pick-body"><span class="pick-title">ACTS</span><span class="pick-sub">最小集 · 128 模块</span></span></div>
+          </div>
+          <label class="checkbox"><input type="checkbox" checked> 只跑未通过模块（增量）—— 按最新归档报告补跑失败 + 未跑完的模块</label>
+        </div>
+        <p class="note">轮次报告完整归档到设备目录 report\\<ACTS|HATS|DCTS|SSTS>\\report-1、report-2 …，编号递增不覆盖；补测上限 2 轮，仍失败的标红走豁免。</p>
+      </div>
+      <div class="workbench__side">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">流水线</span><span class="panel-meta">2 台设备并行</span></div>
+          <div class="pipe">
+            <div class="pipe-stage pipe-stage--done"><span class="pipe-name"><span class="pipe-step">1</span>SSTS</span><span class="pipe-sub">全部通过</span></div>
+            <div class="pipe-stage pipe-stage--running"><span class="pipe-name"><span class="pipe-step">2</span>HATS <span class="spinner"></span></span><span class="pipe-sub">进行中 · 12 模块</span></div>
+            <div class="pipe-stage pipe-stage--skip"><span class="pipe-name"><span class="pipe-step">3</span>DCTS</span><span class="pipe-sub">跳过 · 无屏</span></div>
+            <div class="pipe-stage"><span class="pipe-name"><span class="pipe-step">4</span>ACTS</span><span class="pipe-sub">待执行</span></div>
+          </div>
+          <div class="dev-progress">
+            <div class="dev-progress__row"><div class="dev-progress__top"><span class="dot dot--on"></span><span class="truncate" title="150100424a4e42345207653128028981">15010042…28028981</span><div class="bar bar--slim"><div style="width:64%"></div></div><span class="pct">12/19</span></div></div>
+            <div class="dev-progress__row"><div class="dev-progress__top"><span class="dot dot--on"></span><span class="truncate" title="150100424a4e42345207654125558999">15010042…5558999</span><div class="bar bar--slim"><div style="width:52%"></div></div><span class="pct">10/19</span></div></div>
+          </div>
+        </div>
+        <div class="panel panel--fill" style="min-height:0">
+          <div class="panel-head"><span class="panel-title">轮次记录</span><span class="panel-meta">编号递增不覆盖</span></div>
+          <div class="panel__scroll-wrap" style="max-height:170px">
+            <div class="list">
+              <div class="row row--ready"><div class="row-top"><span class="name truncate">SSTS 第 1 轮 · 全部通过</span><span class="pct">100%</span></div><p class="path truncate" title="归档 D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\report\\SSTS\\report-1">归档 D:\\…\\report\\SSTS\\report-1</p></div>
+              <div class="row row--running"><div class="row-top"><span class="name truncate">HATS 第 1 轮 · 进行中</span><span class="pct">37%</span></div><p class="path truncate" title="归档到 report\\HATS\\report-2（本轮结束后写入）">归档到 report\\HATS\\report-2（本轮结束后写入）</p></div>
+              <div class="row"><div class="row-top"><span class="name truncate">DCTS · 已跳过</span><span class="pct">—</span></div><p class="path truncate" title="无屏方案：跳过 DCTS（需要测试盒子）">无屏方案：跳过 DCTS（需要测试盒子）</p></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`,
+
+  mirror: () => `
+    ${head('镜像固件上传', '平台已有同名固件自动跳过 · 不重复上传',
+      '<button class="btn btn--small">校验</button><button class="btn btn--primary">上传固件</button>')}
+    <div class="workbench">
+      <div class="workbench__main">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">镜像文件</span></div>
+          <div class="field field--wide"><span class="label">固件包路径</span><input class="input input--mono truncate" value="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\DH-76AM-HS26A-20261123.7z" title="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\DH-76AM-HS26A-20261123.7z"></div>
+          <p class="hint">型号-8 位日期命名（.7z / .zip）；上传前查重，同名跳过并显示已有记录的上传时间。</p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">平台查重</span><span class="panel-meta">镜像管理 · 同名 0 条</span></div>
+          <p class="note">平台没有同名记录，可以直接上传；若同名记录未完成（&lt;100%），平台会沿用该记录续传。</p>
+        </div>
+      </div>
+      <div class="workbench__side">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">上传进度</span><span class="panel-meta">DH-76AM-HS26A-20261123.7z</span></div>
+          <div class="progress-top"><span>上传中 · 1.9 GB / 3.1 GB</span><span>62%</span></div>
+          <div class="bar"><div style="width:62%"></div></div>
+          <div class="dev-progress__top"><span class="muted" style="font-size:11.5px">平台原始进度 62.4% · 速率 18.6 MB/s · 剩余约 74 秒</span></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">最近上传</span></div>
+          <div class="list">
+            <div class="row row--ready"><div class="row-top"><span class="name truncate" title="DH-76BM-HL4-20261121.7z">DH-76BM-HL4-20261121.7z</span><span class="chip chip--ok">100%</span></div><p class="path truncate" title="2026-11-21 18:42 · 平台已有同名，跳过">2026-11-21 18:42 · 平台已有同名，跳过</p></div>
+            <div class="row"><div class="row-top"><span class="name truncate" title="DH-76BD-KS13A-20261106.7z">DH-76BD-KS13A-20261106.7z</span><span class="chip">历史</span></div><p class="path truncate" title="2026-11-06 10:08">2026-11-06 10:08</p></div>
+          </div>
+        </div>
+      </div>
+    </div>`,
+
+  waiver: () => `
+    ${head('豁免资料', '只保存草稿，绝不提交 · 附件优先级 zip → pdf → txt',
+      '<button class="btn btn--small">识别目录</button><button class="btn btn--small">豁免资料预检</button><button class="btn btn--primary">保存豁免草稿</button>')}
+    <div class="workbench">
+      <div class="workbench__main">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">豁免配置</span></div>
+          <div class="grid">
+            <div class="field"><span class="label">测评编号（豁免）</span><input class="input input--mono" value="OHC822200009009"></div>
+            <div class="field field--wide"><span class="label">豁免资料路径</span><input class="input input--mono truncate" value="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption" title="D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption"></div>
+          </div>
+          <p class="hint">按目录自动识别分类（Acts / ActsValidator / Hats / Dcts / Ssts）与平台提交路径；预检与保存为浏览器长任务。</p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">识别结果</span><span class="panel-meta">18 条 · 全部就绪</span></div>
+          <div class="panel__scroll-wrap" style="max-height:240px">
+            <div class="list">
+              <div class="row row--ready"><div class="row-top"><span class="chip chip--acts">ACTS</span><span class="name truncate" title="ActsAceEtsModuleAnimation1Test#AnimationJsunit">…Animation1Test#AnimationJsunit</span><span class="chip chip--ok">zip</span></div><p class="path truncate" title="提交路径：Acts/ActsAceEtsModuleAnimation1Test/AnimationJsunit.txt · 附件 AnimationJsunit-豁免材料.zip">提交路径：Acts/…/AnimationJsunit.txt · 附件 -豁免材料.zip</p></div>
+              <div class="row row--ready"><div class="row-top"><span class="chip chip--acts">ACTS</span><span class="name truncate" title="ActsAceEtsModuleAnimation1Test#AnimatorEase">…Animation1Test#AnimatorEase</span><span class="chip chip--ok">zip</span></div><p class="path truncate" title="提交路径：Acts/ActsAceEtsModuleAnimation1Test/AnimatorEase.txt">提交路径：Acts/…/AnimatorEase.txt</p></div>
+              <div class="row row--blocked"><div class="row-top"><span class="chip chip--blocked">ACTS</span><span class="name truncate" title="ActsAceEtsModuleAnimation1Test#ExcludeFromRenderGroupDemo">…#ExcludeFromRenderGroupDemo</span><span class="chip chip--blocked">0 条用例</span></div><p class="problem">报告里没有失败用例行：需要补全 .txt 再重跑</p></div>
+              <div class="row row--ready"><div class="row-top"><span class="chip chip--neutral">ACTS-Validator</span><span class="name truncate" title="ActsValidator#ActsArkUITest">ActsValidator#ActsArkUITest</span><span class="chip chip--warn">txt</span></div><p class="path truncate" title="无 zip / pdf，直接以 .txt 作为豁免材料上传">无 zip / pdf，直接以 .txt 作为豁免材料上传</p></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="workbench__side">
+        ${batchPanel('flex:1;min-height:0', 'exemption')}
+      </div>
+    </div>`,
+
+  settings: () => `
+    ${head('设置', '只放软件配置 · 测试流程配置在各功能页', '')}
+    <div class="workbench workbench--single">
+      <div class="workbench__main" style="max-width:640px">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">主题</span><span class="panel-meta">跟随系统时自动切换深浅色</span></div>
+          <div class="theme-grid">
+            <button class="theme-card theme-card--active"><span class="theme-swatch" style="background:#141519"></span><span class="theme-label">深色</span><span class="muted" style="font-size:11px">当前</span></button>
+            <button class="theme-card"><span class="theme-swatch" style="background:#f2f4f8"></span><span class="theme-label">浅色</span></button>
+            <button class="theme-card"><span class="theme-swatch" style="background:linear-gradient(90deg,#141519 50%,#f2f4f8 50%)"></span><span class="theme-label">跟随系统</span></button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">关于</span></div>
+          <div class="list">
+            <div class="row"><div class="row-top"><span class="name">版本</span><span class="muted">v0.3.0 · Electron 桌面版</span></div></div>
+            <div class="row"><div class="row-top"><span class="name">凭据存储</span><span class="muted">DPAPI 加密（safeStorage）· 本机 %APPDATA%</span></div></div>
+            <div class="row"><div class="row-top"><span class="name">安全边界</span><span class="muted">只调用保存类接口，从不代点确认提交</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>`,
+
+  login: () => `
+    <div class="login">
+      <div class="login__card">
+        <div class="login__brand"><span class="sidebar__logo">XT</span><span class="login__brand-name"><b>XTS 报告上传</b><span>OpenHarmony 兼容性助手</span></span></div>
+        <div class="field"><span class="label">账号</span><input class="input" value="imgeeksu@qq.com"></div>
+        <div class="field"><span class="label">密码</span><input class="input" type="password" placeholder="已保存密码，留空则沿用"></div>
+        <label class="login__remember"><input type="checkbox" checked> 记住密码（DPAPI 加密存本机）</label>
+        <button class="btn btn--primary" style="height:36px">登录平台账号</button>
+        <p class="hint">应用会用无头浏览器真实登录平台验证一次；密码错误当场报错，不会存错凭据。侧边栏底部可退出账号换平台提交。</p>
+      </div>
+    </div>`,
+};
+
+/* ===== 渲染两个方向的窗口 ===== */
+const PAGE_ORDER = [...NAV.map(([id]) => id), 'login'];
+const NAV_HTML = `
+  <div class="sidebar__brand"><span class="sidebar__logo">XT</span><span class="sidebar__brand-name"><b>XTS 报告上传</b><span>OpenHarmony 兼容性助手</span></span></div>
+  <nav class="sidebar__nav">${NAV.map(([id, ico, label]) => `<button class="sidebar__item" data-page="${id}"><span class="ico">${ico}</span>${label}</button>`).join('')}</nav>
+  <div class="sidebar__foot"><span class="sidebar__account" title="imgeeksu@qq.com">账号 imgeeksu@qq.com</span><span>本地任务 执行中</span></div>`;
+
+const wins = { A: document.getElementById('winA'), B: document.getElementById('winB') };
+for (const dir of ['A', 'B']) {
+  const win = wins[dir];
+  win.querySelector('[data-nav]').innerHTML = NAV_HTML;
+  const content = document.getElementById('content' + dir);
+  content.innerHTML = PAGE_ORDER.map((id) => `<section class="page" data-page="${id}">${PAGES[id]()}</section>`).join('');
+  win.querySelectorAll('.sidebar__item').forEach((btn) => {
+    btn.addEventListener('click', () => setPage(dir, btn.dataset.page));
+  });
+}
+
+function setPage(dir, page) {
+  const win = wins[dir];
+  win.dataset.page = page;
+  win.classList.toggle('win--login', page === 'login');
+  win.querySelectorAll('.page').forEach((p) => p.classList.toggle('on', p.dataset.page === page));
+  win.querySelectorAll('.sidebar__item').forEach((b) => b.classList.toggle('active', b.dataset.page === page));
+  const inner = win.querySelector('.mainscroll__inner');
+  if (inner) inner.scrollTop = 0;
+}
+
+/* 顶栏页面按钮：同步切换两个方向 */
+const pageBar = document.getElementById('pageBar');
+const PAGE_LABELS = { overview:'概览', devices:'测试盒子', materials:'评测资料', test:'XTS 自动测试', mirror:'镜像上传', waiver:'豁免资料', settings:'设置', login:'登录页' };
+pageBar.innerHTML = PAGE_ORDER.map((id) => `<button data-page="${id}">${PAGE_LABELS[id]}</button>`).join('');
+pageBar.querySelectorAll('button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    pageBar.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
+    setPage('A', btn.dataset.page);
+    setPage('B', btn.dataset.page);
+  });
+});
+
+/* 主题切换 */
+const themeBtn = document.getElementById('themeBtn');
+themeBtn.addEventListener('click', () => {
+  const html = document.documentElement;
+  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  html.dataset.theme = next;
+  themeBtn.textContent = next === 'dark' ? '切换浅色' : '切换深色';
+});
+
+/* 视图切换（A / B / AB 同屏） */
+const stage = document.getElementById('stage');
+document.querySelectorAll('.demo-bar__views button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.demo-bar__views button').forEach((b) => b.classList.toggle('on', b === btn));
+    stage.dataset.view = btn.dataset.view;
+    scaleAB();
+  });
+});
+function scaleAB() {
+  const vw = window.innerWidth - 36;
+  const cols = stage.dataset.view === 'ab' ? 2 : 1;
+  const scale = Math.min(1, vw / cols / 1280);
+  document.querySelectorAll('.mock__scale').forEach((wrap) => {
+    wrap.style.height = 860 * scale + 2 + 'px';
+    wrap.style.width = 1280 * scale + 'px';
+    wrap.firstElementChild.style.transform = scale < 1 ? `scale(${scale})` : 'none';
+  });
+}
+window.addEventListener('resize', scaleAB);
+scaleAB();
+
+/* ===== 豁免批次 18 条模拟数据（真实感：长路径 / 四套件 / 四态） ===== */
+const rows = [
+  ['ready','ACTS','ActsAceEtsModuleAnimation1Test#AnimationJsunit',100,'已保存草稿：标准系统 / OpenHarmony 6.1 LTS'],
+  ['ready','ACTS','ActsAceEtsModuleAnimation1Test#AnimatorEase',100,'已保存草稿：标准系统 / OpenHarmony 6.1 LTS'],
+  ['running','ACTS','ActsAceEtsModuleAnimation1Test#CurvesSpringMotion',64,'登录平台 imgeeksu@qq.com'],
+  ['','ACTS','ActsAceEtsModuleAnimation1Test#animationAdd',0,'D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption\\Acts\\ActsAceEtsModuleAnimation1Test\\animationAdd.txt'],
+  ['blocked','ACTS','ActsAceEtsModuleAnimation1Test#ExcludeFromRenderGroupDemo',100,'失败：DUPLICATE_LOOKUP_INCOMPLETE: The waiver-list query returned more rows than one page'],
+  ['','ACTS','ActsAceEtsModuleAnimation1Test#ExpectedFrameRateRange',0,'D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption\\Acts\\ActsAceEtsModuleAnimation1Test\\ExpectedFrameRateRange.txt'],
+  ['ready','ACTS','ActsAceEtsModuleAnimation1Test#MotionPathExample',100,'已保存草稿：标准系统 / OpenHarmony 6.1 LTS'],
+  ['ready','ACTS','ActsAceEtsModuleAnimation1Test#StepsCurveComponent',100,'已保存草稿：标准系统 / OpenHarmony 6.1 LTS'],
+  ['','ACTS','ActsAceEtsModuleAnimation1Test#UIContextAnimateToImmediately',0,'D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption\\Acts\\ActsAceEtsModuleAnimation1Test\\UIContextAnimateToImmediately.txt'],
+  ['ready','ACTS','ActsAceEtsModuleCommonEventsCustomGestureRecognitionTest#APIshouldBuiltInRecognizerParallelWith',100,'已保存草稿：标准系统 / OpenHarmony 6.1 LTS'],
+  ['','HATS','HatsHdfInputPassthroughAdditionalTest',0,'D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption\\Hats\\HatsHdfInputPassthroughAdditionalTest\\HatsHdfInputPassthroughAdditionalTest.txt'],
+  ['warn','HATS','HatsHdfInputPassthroughTest',80,'已存在同键记录，跳过：EXISTING_WAIVER_UNDER_REVIEW'],
+  ['','DCTS','DctsSoftBusTransSessionFunTest',0,'D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption\\Dcts\\DctsSoftBusTransSessionFunTest\\DctsSoftBusTransSessionFunTest.txt'],
+  ['','SSTS','SstsSystemParameterTest',0,'D:\\ohos\\XTS6.1\\DHong\\DH-76AM-HS26A\\exemption\\Ssts\\SstsSystemParameterTest\\SstsSystemParameterTest.txt'],
+  ['ready','ACTS-Validator','ActsArkUITest',100,'已保存草稿：标准系统 / OpenHarmony 6.1 LTS'],
+  ['warn','ACTS-Validator','ActsAudioTest',100,'已存在同键记录，跳过：EXISTING_WAIVER_UNDER_REVIEW'],
+  ['warn','ACTS-Validator','ActsCameraTest',100,'已存在同键记录，跳过：EXISTING_WAIVER_UNDER_REVIEW'],
+  ['blocked','ACTS-Validator','ActsScreenTest',100,'失败：ASSESSMENT_LOOKUP_FAILED: 测评编号 OHC822200009009 反查失败（已重试 3 次）'],
+];
+const chipTone = { ready:'chip--ok', running:'chip--acts', blocked:'chip--blocked', warn:'chip--warn' };
+const rowTone = { ready:'row--ready', running:'row--running', blocked:'row--blocked', warn:'row--warn' };
+const statusText = { ready:'已保存', running:'进行中', blocked:'失败', warn:'跳过' };
+const batchHtml = rows.map(([state, cat, name, pct, detail]) => `
+  <div class="row ${rowTone[state] || ''}">
+    <div class="row-top">
+      <span class="chip ${cat === 'ACTS' ? 'chip--acts' : chipTone[state] || 'chip--neutral'}">${cat}</span>
+      <span class="name truncate" title="${name}">${name}</span>
+      <div class="bar bar--slim"><div ${pct === 100 && state === 'blocked' ? 'class="danger"' : ''} style="width:${pct}%"></div></div>
+      <span class="pct">${pct}%${statusText[state] ? ' · ' + statusText[state] : ''}</span>
+    </div>
+    <p class="path truncate" title="${detail.replaceAll('"', '&quot;')}">${detail}</p>
+  </div>`).join('');
+document.querySelectorAll('.js-batch-rows').forEach((el) => { el.innerHTML = batchHtml; });
+
+/* 默认页：XTS 自动测试 */
+setPage('A', 'test');
+setPage('B', 'test');
+pageBar.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.page === 'test'));
+</script>
+</body>
+</html>

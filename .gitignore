@@ -3,3 +3,5 @@ dist/
 out/
 *.log
 .DS_Store
+# uitest dump（临时抓取，不作为资产）
+.box-ui.json
