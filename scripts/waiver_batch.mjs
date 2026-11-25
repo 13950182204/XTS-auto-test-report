@@ -23,7 +23,7 @@
  * 不落盘、不打印。
  */
 
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -33,7 +33,7 @@ import { detectTestCategory, submissionPathFor } from './waiver_logic.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SCRIPT = path.join(HERE, 'waiver_draft.mjs')
-const CASE_RE = /(?:^|[-*]\s*)([A-Za-z0-9_]+)#([A-Za-z0-9_]+)#(.+?)\s*$/
+// 用例行的解析规则见下方 CASE_BODY_RE / CASE_BULLET_RE / CASE_LABEL_RE。
 const RESULT_PREFIX = 'WAIVER_RESULT_JSON='
 
 function parseArgs(argv) {
@@ -69,6 +69,14 @@ function stamp() {
   return new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
 }
 
+/**
+ * 非豁免报告的 .txt：佐证/备份目录里的摘录与说明。豁免资料根下常见
+ * `_backup_20261120/…/<用例>-report.txt`、`豁免原因.txt`、`screenshots/` 这类文件，
+ * 它们既没有用例行也没有豁免原因，被当成报告去建草稿只会刷出一堆假失败。
+ */
+const NON_REPORT_DIR_RE = /^(?:evidence|screenshots|backups?)$|^[_.]/i
+const NON_REPORT_FILE_RE = /-report\.txt$/i
+
 async function listReports(input) {
   const status = await fs.stat(input).catch(() => null)
   if (!status) throw new Error(`路径不存在：${input}`)
@@ -81,8 +89,8 @@ async function listReports(input) {
       const full = path.join(directory, entry.name)
       // evidence/ 放的是佐证日志，不是豁免报告；不要当成报告去创建草稿。
       if (entry.isDirectory()) {
-        if (entry.name !== 'evidence') await walk(full)
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
+        if (!NON_REPORT_DIR_RE.test(entry.name)) await walk(full)
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt') && !NON_REPORT_FILE_RE.test(entry.name)) {
         found.push(full)
       }
     }
@@ -157,11 +165,25 @@ function splitSections(lines) {
 const TRAILING_NOTE_RE = /[（(][^（）()]*[)）]\s*$/
 const EVIDENCE_RE = /^-\s+(evidence\/[^\s：:]+)/
 const ZIP_SUFFIX = '-豁免材料.zip'
+const PDF_SUFFIX = '-豁免材料.pdf'
+/** 用例行正文（去掉列表符号与「失败用例：」标签后的纯 `模块#套件#用例`）。 */
+const CASE_BODY_RE = /^([A-Za-z0-9_]+)#([A-Za-z0-9_]+)#(.+?)\s*$/
+/** 用例行的两种前缀：列表符号 `- ` / `* `，以及中文标签「失败用例：」（HATS 与部分 ACTS 报告用）。 */
+const CASE_BULLET_RE = /^[-*]\s*/
+const CASE_LABEL_RE = /^(?:失败用例|用例)\s*[：:]\s*/
+/**
+ * 模块级豁免声明：`模块级豁免：<模块名> 全部用例（…）`。
+ * HATS（HDF 输入）这类「被测对象在本机型不存在」的模块，平台侧的豁免语义就是模块级
+ * ——不填测试套、不填用例名。此前只认用例行，导致这类报告一律被判「没有失败用例」。
+ */
+const MODULE_SCOPE_RE = /模块级豁免\s*[：:]\s*([A-Za-z0-9_]+)/
 
 function parseCases(lines) {
   const cases = []
   for (const line of lines) {
-    const match = CASE_RE.exec(line.trim())
+    // 三种写法都要认：`- M#S#C`、`M#S#C`、`失败用例：M#S#C`。
+    const body = line.trim().replace(CASE_BULLET_RE, '').replace(CASE_LABEL_RE, '')
+    const match = CASE_BODY_RE.exec(body)
     if (!match) continue
     // 用例行允许「（报告耗时 x s）」尾注；提交给平台的 Testcase 只要裸用例名。
     const testcase = match[3].replace(TRAILING_NOTE_RE, '').trim()
@@ -199,10 +221,20 @@ async function checkLayout(reportPath, moduleName, testsuite, evidenceRefs) {
   const archive = path.join(directory, `${testsuite}${ZIP_SUFFIX}`)
   const archiveStat = await fs.stat(archive).catch(() => null)
   const hasArchive = archiveStat?.isFile() === true
-  // 附件规则：优先用 <套件>-豁免材料.zip；没有 zip 时直接把本份报告 .txt 当附件上传
-  // （平台接受单个 txt 作为豁免材料，见 2026-11-06 用户确认）。因此缺 zip 不再是阻塞项。
-  const attachmentPath = hasArchive ? archive : path.resolve(reportPath)
-  const attachmentKind = hasArchive ? 'zip' : 'txt'
+  // 附件优先级（2026-11-22 用户要求）：① <套件>-豁免材料.zip
+  // ② 豁免材料 PDF（<套件>-豁免材料.pdf 或 <套件>.pdf）③ 都没有才用本份报告 .txt。
+  const pdfCandidates = [
+    path.join(directory, `${testsuite}${PDF_SUFFIX}`),
+    path.join(directory, `${testsuite}.pdf`),
+  ]
+  let pdfStat = null
+  for (const candidate of pdfCandidates) {
+    pdfStat = await fs.stat(candidate).catch(() => null)
+    if (pdfStat?.isFile() === true) { pdfStat = { stat: pdfStat, file: candidate }; break }
+    pdfStat = null
+  }
+  const attachmentPath = hasArchive ? archive : pdfStat ? pdfStat.file : path.resolve(reportPath)
+  const attachmentKind = hasArchive ? 'zip' : pdfStat ? 'pdf' : 'txt'
   for (const ref of evidenceRefs) {
     const target = path.join(directory, ref)
     const stat = await fs.stat(target).catch(() => null)
@@ -222,22 +254,40 @@ async function inspectReport(reportPath, assessment, testCategory) {
   const sections = splitSections(lines)
   const cases = parseCases(sections[1] ?? [])
   const parseProblems = []
-  if (cases.length === 0) parseProblems.push(`报告里没有失败用例：${reportPath}`)
+  // 模块级豁免：声明了「模块级豁免：<模块> 全部用例」就不需要用例行（平台语义＝模块名有值、
+  // 测试套与用例留空＝整个模块豁免）。模块名只认声明行与文件名，不从正文猜。
+  const declaredModule = MODULE_SCOPE_RE.exec(text)?.[1] ?? ''
+  const scope = cases.length > 0 ? 'cases' : declaredModule ? 'module' : ''
+  if (scope === '') {
+    parseProblems.push(`报告里没有失败用例：${reportPath}（需「- 模块#套件#用例」或「失败用例：模块#套件#用例」形式的用例行，或一行「模块级豁免：<模块名> 全部用例」）`)
+  }
   const first = cases[0] ?? { module: '', testsuite: '' }
   if (cases.some((item) => item.module !== first.module || item.testsuite !== first.testsuite)) {
     parseProblems.push(`同一报告里混有不同模块/测试套：${reportPath}（一个 .txt 只能是一个模块的一个 Testsuite，请拆分文件）`)
   }
-  const reason = cleanText(sections[3] ?? []) || cleanText(sections[2] ?? [])
+  const moduleName = first.module || declaredModule
+  // 模块级豁免没有测试套：布局与附件仍按 <模块>.txt / <模块>-豁免材料.zip 这套命名校验，
+  // 所以这里把「套件」位填成模块名，附件优先级（zip → pdf → txt）才不会失效。
+  const testsuite = first.testsuite || (scope === 'module' ? moduleName : '')
+  // 第 3 节只是「附件说明：xxx.docx」时不能当豁免理由提交（HATS 报告就是这种写法），
+  // 真正的理由在第 2 节；两节都带上，避免平台「豁免原因」里只有一句附件索引。
+  const secondReason = cleanText(sections[2] ?? [])
+  const thirdReason = cleanText(sections[3] ?? [])
+  const thirdIsIndex = /^附件(说明|索引)/.test(thirdReason) && thirdReason.length < 200
+  const reason = thirdIsIndex
+    ? [secondReason, thirdReason].filter(Boolean).join('\n\n')
+    : thirdReason || secondReason
   if (!reason) parseProblems.push(`报告缺少豁免原因：${reportPath}`)
   const evidenceRefs = referencedEvidence(sections[1] ?? [])
-  const layout = first.module && first.testsuite
-    ? await checkLayout(reportPath, first.module, first.testsuite, evidenceRefs)
+  const layout = moduleName && testsuite
+    ? await checkLayout(reportPath, moduleName, testsuite, evidenceRefs)
     : { problems: [], attachmentPath: path.resolve(reportPath), attachmentKind: 'txt' }
   return {
     record: {
       assessmentNumber: assessment,
       testCategory,
-      moduleName: first.module,
+      scope,
+      moduleName,
       testsuite: first.testsuite,
       testcases: cases.map((item) => item.testcase),
       caseCount: cases.length,
@@ -337,22 +387,78 @@ function parseChildResult(output) {
   return undefined
 }
 
-async function runOne(record, itemDir, options) {
+async function runOne(record, itemDir, options, onChildProgress) {
   const inputFile = path.join(itemDir, 'input.json')
   await fs.writeFile(inputFile, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
   const args = [SCRIPT, '--input', inputFile, options.dryRun ? '--dry-run' : '--save', '--artifacts', itemDir]
-  const completed = spawnSync(process.execPath, args, {
-    env: process.env,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: 10 * 60 * 1000,
+  // 异步 spawn 并逐行转发子进程的 PHASE2_PROGRESS——浏览器保存一条草稿要 1~3 分钟，
+  // spawnSync 会让批次进度整段时间静止（UI 看起来「卡住」）。
+  const outcome = await new Promise((resolve) => {
+    let stdout = ''
+    let stderr = ''
+    const child = spawn(process.execPath, args, { env: process.env, windowsHide: true })
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL') } catch { /* 进程已退出 */ }
+    }, 10 * 60 * 1000)
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+      for (const line of chunk.split(/\r?\n/)) {
+        if (!line.startsWith('PHASE2_PROGRESS=')) continue
+        try {
+          const parsed = JSON.parse(line.slice('PHASE2_PROGRESS='.length))
+          if (parsed && typeof parsed === 'object') onChildProgress?.(parsed)
+        } catch { /* 半行进度忽略 */ }
+      }
+    })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      resolve({ code: 1, output: `${stdout}\n${String(error)}`.trim() })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code: code ?? 1, output: `${stdout}${stderr ? `\n${stderr}` : ''}`.trim() })
+    })
   })
-  const output = `${completed.stdout ?? ''}${completed.stderr ? `\n${completed.stderr}` : ''}`.trim()
-  return { code: completed.status ?? 1, output, result: parseChildResult(output) }
+  return { code: outcome.code, output: outcome.output, result: parseChildResult(outcome.output) }
 }
 
 function emit(line, value) {
   process.stdout.write(`${line}=${JSON.stringify(value)}\n`)
+}
+
+/**
+ * 这台设备资料用的测评编号：取同目录下工具自己写的批量结果目录里的 result.json
+ * （`OpenHarmony兼容性批量结果_<时间戳>/` 或 `OpenHarmony兼容性申请_第二阶段_结果_<时间戳>/`）。
+ * 找不到就不拦（没有证据不乱判），找到但和参数不一致必须停。
+ */
+async function expectedAssessmentFor(inputPath) {
+  let directory = path.dirname(path.resolve(inputPath))
+  for (let depth = 0; depth < 3; depth += 1) {
+    const entries = await fs.readdir(directory).catch(() => null)
+    if (entries) {
+      const hits = entries
+        .filter((name) => name.startsWith('OpenHarmony兼容性批量结果_') || /^OpenHarmony兼容性申请_第二阶段_结果_/.test(name))
+        .sort()
+        .reverse()
+      for (const hit of hits) {
+        const source = path.join(directory, hit, 'result.json')
+        const raw = await readText(source)
+        if (!raw) continue
+        try {
+          const parsed = JSON.parse(raw)
+          const number = parsed?.items?.[0]?.assessmentNumber || parsed?.assessmentNumber || ''
+          if (String(number).trim()) return { number: String(number).trim(), source }
+        } catch { /* 结果文件坏了就不据此拦截 */ }
+      }
+    }
+    const parent = path.dirname(directory)
+    if (parent === directory) break
+    directory = parent
+  }
+  return null
 }
 
 /**
@@ -418,6 +524,19 @@ async function main() {
     return
   }
 
+  // 测评编号必须是这台设备的：草稿会挂到编号所在的认证记录下，错了就是挂到别的设备上，
+  // 事后只能人工一条条删（2026-11-24 实测：拿 BC-HL4 的资料 + BM-HL4 的编号，12 条全挂错）。
+  const expected = await expectedAssessmentFor(inputPath)
+  if (expected && expected.number.toLowerCase() !== options.assessment.trim().toLowerCase()) {
+    console.error(
+      `测评编号与设备资料不一致，已停止：参数是 ${options.assessment.trim()}，`
+      + `但 ${expected.source} 记录这台设备用的是 ${expected.number}。`
+      + '请改正编号（或确认资料目录）后重跑；已生成的草稿请在平台按编号核对清理。',
+    )
+    process.exitCode = 1
+    return
+  }
+
   const items = reports.map((report, index) => ({
     directory: artifactsRoot,
     workbookPath: report,
@@ -447,6 +566,8 @@ async function main() {
   })
 
   let failed = 0
+  // 只有浏览器侧（已在平台留下状态）的失败才值得停整个批次；本地解析/布局失败不中断。
+  let browserFailed = 0
   for (let index = 0; index < reports.length; index += 1) {
     const report = reports[index]
     const item = items[index]
@@ -469,7 +590,8 @@ async function main() {
       failed += 1
       emit('PHASE2_BATCH_ITEM_RESULT', { ...item })
       results.push({ ...item, code: 'REPORT_PARSE_FAILED', message: item.detail })
-      break
+      // 本地解析失败还没有碰过浏览器，不能连累后面的报告；继续跑完整个目录再统一汇总。
+      continue
     }
 
     let record
@@ -484,9 +606,11 @@ async function main() {
       failed += 1
       emit('PHASE2_BATCH_ITEM_RESULT', { ...item })
       results.push({ ...item, code: 'REPORT_PARSE_FAILED', message: item.detail })
-      break
+      continue
     }
-    item.name = `${record.moduleName}#${record.testsuite}`
+    // 模块级豁免没有测试套：名字只显示模块名，别拼出一个尾巴是 '#' 的条目。
+    item.name = record.testsuite ? `${record.moduleName}#${record.testsuite}` : `${record.moduleName}（整模块）`
+    item.scope = record.scope
     item.assessmentNumber = record.assessmentNumber
     item.percent = 20
     item.stage = options.dryRun ? '登录并预检' : '登录并保存草稿'
@@ -494,14 +618,30 @@ async function main() {
     emit('PHASE2_PROGRESS', {
       percent: Math.max(1, Math.round((index / reports.length) * 100)),
       stage: `第 ${index + 1}/${reports.length} 条：${item.stage}`,
-      detail: `${record.moduleName}#${record.testsuite}（${record.testcases.length} 条用例）`,
+      detail: `${item.name}（${record.testcases.length} 条用例）`,
       itemIndex: index + 1,
       itemTotal: reports.length,
       itemPercent: 20,
       workbookPath: report,
     })
 
-    const outcome = await runOne(record, itemDir, options)
+    const outcome = await runOne(record, itemDir, options, (childProgress) => {
+      // 子进程进度（0-100）映射到本条目的 20-100 区间；实时同步给宿主的批次进度。
+      const childPercent = Math.max(0, Math.min(100, Number(childProgress.percent) || 0))
+      item.percent = 20 + Math.round(childPercent * 0.8)
+      if (childProgress.stage) item.stage = childProgress.stage
+      if (childProgress.detail) item.detail = childProgress.detail
+      emit('PHASE2_BATCH_ITEM_RESULT', { ...item })
+      emit('PHASE2_PROGRESS', {
+        percent: Math.max(1, Math.round(((index * 100 + item.percent) / reports.length))),
+        stage: `${index + 1}/${reports.length} 条：${item.stage}`,
+        detail: `${item.name}：${item.detail || ''}`,
+        itemIndex: index + 1,
+        itemTotal: reports.length,
+        itemPercent: item.percent,
+        workbookPath: report,
+      })
+    })
     const result = outcome.result ?? {}
     const derived = result.derived && typeof result.derived === 'object' ? result.derived : {}
     item.percent = 100
@@ -521,6 +661,7 @@ async function main() {
       item.stage = '失败'
       item.detail = `${result.code || 'UNKNOWN'}: ${result.message || outcome.output.slice(-500)}`
       failed += 1
+      browserFailed += 1
     }
     results.push({ ...item, code: result.code, message: result.message, artifacts: result.artifacts })
     emit('PHASE2_BATCH_ITEM_RESULT', { ...item, percent: 100, stage: item.stage, detail: item.detail })
@@ -533,7 +674,16 @@ async function main() {
       itemPercent: 100,
       workbookPath: report,
     })
-    if (failed > 0) break
+    if (browserFailed > 0) break
+  }
+
+  // 被前序浏览器侧失败挡住的条目不能继续显示 0%「待处理」——那看起来像还在跑。
+  for (const item of items) {
+    if (item.status !== 'pending') continue
+    item.status = 'skipped'
+    item.stage = '未执行'
+    item.detail = '前一条在浏览器侧失败已停止批次（本地解析失败不会中断）'
+    emit('PHASE2_BATCH_ITEM_RESULT', { ...item })
   }
 
   const summary = {

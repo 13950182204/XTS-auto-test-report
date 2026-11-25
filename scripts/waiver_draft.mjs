@@ -204,11 +204,36 @@ async function findExistingWaiver(page, input) {
   if (payload?.code !== 200 || !Array.isArray(payload.body?.rows)) {
     throw new WaiverError('DUPLICATE_LOOKUP_FAILED', 'The waiver-list query did not return a valid result.');
   }
-  const total = Number(payload.body.total) || payload.body.rows.length;
-  if (total > payload.body.rows.length) {
-    throw new WaiverError('DUPLICATE_LOOKUP_INCOMPLETE', 'The waiver-list query returned more rows than one page; no application was created.');
+  // 同键查重必须覆盖全部记录：结果超过一页时用平台自己的分页控件逐页取全，
+  // 单页查不全就放弃会让大批量豁免在第 11 条之后全部误报 DUPLICATE_LOOKUP_INCOMPLETE。
+  const rows = [...payload.body.rows];
+  let total = Number(payload.body.total) || rows.length;
+  let pageGuard = 0;
+  while (rows.length < total && pageGuard < 50) {
+    const nextResponsePromise = page.waitForResponse(
+      (pageResponse) => pageResponse.url().endsWith('/certificate/exempt/list')
+        && pageResponse.request().method() === 'POST',
+      { timeout: 15_000 },
+    );
+    const clicked = await page.evaluate(() => {
+      const button = document.querySelector('.btn-next')
+        || [...document.querySelectorAll('button')].find((item) => item.textContent?.trim() === '下一页');
+      if (!button || button.classList.contains('disabled') || button.disabled) return false;
+      button.click();
+      return true;
+    });
+    if (!clicked) break;
+    const nextResponse = await nextResponsePromise.catch(() => null);
+    const nextPayload = await nextResponse?.json().catch(() => null);
+    if (nextPayload?.code !== 200 || !Array.isArray(nextPayload.body?.rows)) break;
+    rows.push(...nextPayload.body.rows);
+    total = Number(nextPayload.body.total) || rows.length;
+    pageGuard += 1;
   }
-  const matching = payload.body.rows.filter((row) => waiverMatchForInput(row, input));
+  if (rows.length < total) {
+    throw new WaiverError('DUPLICATE_LOOKUP_INCOMPLETE', `The waiver-list query returned ${total} rows but only ${rows.length} could be collected; no application was created.`);
+  }
+  const matching = rows.filter((row) => waiverMatchForInput(row, input));
   if (matching.length === 0) return null;
   const statuses = matching.map((row) => Number(row.status)).filter((value) => Number.isFinite(value));
   // status: 0=待提交 1=审核中 2=豁免成功 3=豁免失败。0/1/2 都不再创建；只有 3 允许重新申请。
@@ -279,19 +304,39 @@ async function inputByPlaceholder(page, placeholder) {
   return input;
 }
 
+/**
+ * 平台表单会把尖括号当标签吃掉：填 `宽度（<1500）` 回读成 `宽度（1500）`，
+ * 于是 fill 之后的校验直接判 FIELD_VALUE_MISMATCH（2026-11-24 EnableToolBarAdaptation 实测）。
+ * 豁免理由里这种阈值写法很常见，统一换成同义全角字符再填，语义不变也不会被过滤。
+ */
+function sanitizeForPlatform(value) {
+  return String(value ?? '').replace(/</g, '＜').replace(/>/g, '＞');
+}
+
+/** 首个差异位置：报错要指到具体字符，否则只能靠猜平台又吃了什么。 */
+function describeMismatch(expected, actual) {
+  const limit = Math.min(expected.length, actual.length);
+  let index = 0;
+  while (index < limit && expected[index] === actual[index]) index += 1;
+  const around = expected.slice(Math.max(0, index - 6), index + 6);
+  const actualAround = actual.slice(Math.max(0, index - 6), index + 6);
+  return `填写 ${expected.length} 字、回读 ${actual.length} 字，第 ${index + 1} 字起不同：填写「${around}」/回读「${actualAround}」`;
+}
+
 async function fillByPlaceholder(page, placeholder, value) {
   const input = await inputByPlaceholder(page, placeholder);
+  const target = sanitizeForPlatform(value);
   if (await input.isDisabled().catch(() => false) || await input.getAttribute('readonly').catch(() => null) !== null) {
     const actual = await input.inputValue();
-    if (actual !== value) {
-      throw new WaiverError('FIELD_VALUE_MISMATCH', `Read-only field ${placeholder} does not match its requested value.`);
+    if (actual !== target) {
+      throw new WaiverError('FIELD_VALUE_MISMATCH', `Read-only field ${placeholder} does not match its requested value（${describeMismatch(target, actual)}）.`);
     }
     return;
   }
-  await input.fill(value);
+  await input.fill(target);
   const actual = await input.inputValue();
-  if (actual !== value) {
-    throw new WaiverError('FIELD_VALUE_MISMATCH', `Field ${placeholder} did not retain its value.`);
+  if (actual !== target) {
+    throw new WaiverError('FIELD_VALUE_MISMATCH', `Field ${placeholder} did not retain its value（${describeMismatch(target, actual)}）.`);
   }
 }
 
@@ -500,6 +545,31 @@ async function launchBrowser() {
     throw new WaiverError('BROWSER_LAUNCH_FAILED', '无法启动浏览器（请先执行 pnpm exec playwright install chromium，或安装 Edge/Chrome）：' + (primaryError && primaryError.message ? primaryError.message : String(primaryError)));
   }
 }
+function reportProgress(percent, stage, detail) {
+  process.stdout.write(`PHASE2_PROGRESS=${JSON.stringify({
+    percent: Math.max(0, Math.min(100, Math.round(percent))),
+    stage,
+    detail: detail || '',
+  })}\n`);
+}
+
+// 平台偶发限流会让 checkCertification 间歇性查不到（同一 Token 前几秒还可用）。
+// 反查失败自动重试三次（0s / 5s / 15s 退避）；其它错误码不重试直接抛。
+async function lookupAssessmentWithRetry(page, assessmentNumber) {
+  const delays = [0, 5000, 15000];
+  let lastError;
+  for (const delay of delays) {
+    if (delay) await page.waitForTimeout(delay);
+    try {
+      return await lookupAssessment(page, assessmentNumber);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof WaiverError) || error.code !== 'ASSESSMENT_LOOKUP_FAILED') throw error;
+    }
+  }
+  throw lastError;
+}
+
 async function main() {
   let options;
   try {
@@ -528,13 +598,16 @@ async function main() {
       throw new WaiverError('CREDENTIALS_MISSING', 'OH_USERNAME and OH_PASSWORD must be set as temporary environment variables.');
     }
 
+    reportProgress(5, '启动浏览器', `附件：${path.basename(attachmentPath)}`);
     browser = await launchBrowser();
     const context = await browser.newContext();
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
 
+    reportProgress(10, '登录平台', username);
     await signIn(page, artifacts, username, password);
-    const derived = await lookupAssessment(page, input.assessmentNumber);
+    reportProgress(22, '反查测评编号', input.assessmentNumber);
+    const derived = await lookupAssessmentWithRetry(page, input.assessmentNumber);
     console.log('ASSESSMENT_DERIVED: ' + JSON.stringify({ systemType: derived.systemTypeName, systemVersion: derived.systemVersionName, certificationId: derived.certificationId }));
     preparedInput = { ...preparedInput, systemType: derived.systemTypeName, osVersion: derived.systemVersionName };
     if (Array.isArray(derived.testTypes) && derived.testTypes.length > 0 && !derived.testTypes.includes(input.testCategory)) {
@@ -545,14 +618,17 @@ async function main() {
       console.log('Lookup only: no draft created. Artifacts: ' + artifacts);
       return;
     }
+    reportProgress(35, options.dryRun ? '查重预检' : '打开申请页', `${input.moduleName} / ${input.testsuite}`);
     const formOpened = await navigateToApplication(page, artifacts, input, options.dryRun);
     if (!formOpened) {
+      reportProgress(100, options.dryRun ? '预检通过' : '查重完成', '同键记录已存在，无需新建');
       const preflightSummary = { status: 'preflight-complete', action: 'none', artifacts: artifacts, assessmentNumber: input.assessmentNumber, moduleName: input.moduleName, derived: derived };
       await writeResult(artifacts, preflightSummary);
       console.log('WAIVER_RESULT_JSON=' + JSON.stringify(preflightSummary));
       console.log(`Dry run completed. No application was created. Artifacts: ${artifacts}`);
       return;
     }
+    reportProgress(55, '填写豁免表单', `${input.testcases.length} 条用例`);
     await fillApplication(page, artifacts, preparedInput);
     await safeScreenshot(page, artifacts, 'before-save');
     if (process.env.OH_FILL_ONLY === '1') {
@@ -563,12 +639,14 @@ async function main() {
       return;
     }
 
+    reportProgress(85, '保存草稿', '点击保存/暂存按钮');
     const saveButton = await findSafeSaveButton(page);
     await saveButton.click();
     await page.waitForTimeout(800);
     await throwIfVerificationRequired(page, artifacts);
     const statusText = await verifySaved(page);
     await safeScreenshot(page, artifacts, 'saved');
+    reportProgress(100, '已保存草稿', statusText);
     const savedSummary = { status: 'saved', action: 'save-draft', message: statusText, artifacts: artifacts, assessmentNumber: input.assessmentNumber, moduleName: input.moduleName, testsuite: input.testsuite, testcases: input.testcases, derived: derived };
     await writeResult(artifacts, savedSummary);
     console.log('WAIVER_RESULT_JSON=' + JSON.stringify(savedSummary));
