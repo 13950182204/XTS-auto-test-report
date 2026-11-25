@@ -562,14 +562,28 @@ async function dumpUiNodes(hdc, sn) {
  * 循环清完弹窗队列。位置类弹窗优先「仅使用期间允许」，没有再退「允许本次使用」。
  */
 const PERMISSION_ALLOW_TEXTS = ['仅使用期间允许', '使用期间允许', '始终允许', '允许本次使用', '允许'];
+/** 非权限的系统提示框（bm clean 后启动 dcct 常弹「无法打开此文件」），点掉即可继续。 */
+const BENIGN_NOTICE_TEXTS = ['知道了', '确定', '好的', '关闭'];
 async function dismissDcctPermissionDialog(hdc, sn, onDetail) {
-  for (let round = 0; round < 5; round += 1) {
+  for (let round = 0; round < 8; round += 1) {
     const nodes = await dumpUiNodes(hdc, sn);
     const allow = nodes.find((node) => node.type === 'Button' && PERMISSION_ALLOW_TEXTS.includes(node.text));
-    if (!allow) return round > 0;
-    onDetail?.(`dcct 弹出系统权限弹窗，点「${allow.text}」…`);
-    await uitestClick(hdc, sn, allow.x, allow.y);
-    await sleep(1500);
+    if (allow) {
+      onDetail?.(`dcct 弹出系统权限弹窗，点「${allow.text}」…`);
+      await uitestClick(hdc, sn, allow.x, allow.y);
+      await sleep(1500);
+      continue;
+    }
+    // 权限弹窗后面常常还跟一个「无法打开此文件 / 知道了」之类的提示框，它没有「允许/禁止」
+    // 这类按钮，只按权限文案匹配会漏掉，导致后面找不到 Wi-Fi/下一步（2026-11-25 实测）。
+    const notice = nodes.find((node) => node.type === 'Button' && BENIGN_NOTICE_TEXTS.includes(node.text));
+    if (notice) {
+      onDetail?.(`dcct 弹出提示框，点「${notice.text}」…`);
+      await uitestClick(hdc, sn, notice.x, notice.y);
+      await sleep(1500);
+      continue;
+    }
+    return round > 0;
   }
   return true;
 }
@@ -932,6 +946,67 @@ function deviceInConnectedSection(nodes, identifiers) {
   return nodes.some((node) => identifiers.includes(node.text)
     && node.y > label.y
     && (nextLabel ? node.y < nextLabel.y : true));
+}
+
+/**
+ * 解绑 dcct 上已有的全部「已连接设备」（用户要求 2026-11-25：DCTS 组网前先清空历史连接）。
+ *
+ * 走 `bm clean -n <dcct> -d` 清应用数据，而不是点界面上的「删除」：
+ * 实测点「是否删除 <设备名>」→「删除」后弹窗关闭，但设备条目**依然留在已连接列表里**
+ * （2026-11-25 盒子实测 12 次点击后仍是同一台）；bm clean 后重新拉起 dcct，列表为空。
+ * 清完再核对一次界面，避免「清是清了、列表只是没刷新」的自欺。
+ */
+async function unbindDcctDevices(hdc, sn, swipeArgs, tag, onDetail) {
+  /** 进到设备列表页并数「已连接设备」分区里的条目；不在列表页返回 null。 */
+  const connectedCount = async () => {
+    const nodes = await dumpUiNodes(hdc, sn);
+    const label = nodes.find((node) => node.text === '已连接设备');
+    if (!label) return null;
+    const available = nodes.find((node) => node.text === '可用设备' && node.y > label.y);
+    return nodes.filter((node) => node.text === '已连接'
+      && node.y > label.y
+      && (available ? node.y < available.y : true)).length;
+  };
+
+  /** 清数据会连授权一起清掉，dcct 会连弹多道系统授权（一道接一道），轮询放行到不再弹为止。 */
+  const relaunchAndDismiss = async () => {
+    await hdcCommand(hdc, ['-t', sn, 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 10000).catch(() => {});
+    await sleep(3000);
+    for (let round = 0; round < 8; round += 1) {
+      if (!await dismissDcctPermissionDialog(hdc, sn, onDetail)) break;
+      await sleep(1200);
+    }
+  };
+
+  // 必须先推进到设备列表页（dcct 冷启动停在第 1 页的组网方式选择），否则读不到分区。
+  await wakeUnlockScreen(hdc, sn, swipeArgs, onDetail);
+  await relaunchAndDismiss();
+  const prep = await prepareDcctPage(hdc, sn, swipeArgs, tag, onDetail);
+  if (!prep.ok) return { ok: false, removed: 0, reason: prep.reason };
+
+  const before = await connectedCount();
+  if (before === null) {
+    return { ok: false, removed: 0, reason: `${tag}找不到「已连接设备」分区` };
+  }
+  if (before === 0) return { ok: true, removed: 0 };
+
+  // 走 bm clean 而不是点界面「删除」：实测点「删除」后弹窗关闭但条目仍在列表里
+  // （盒子连续 12 次点击仍是同一台）；bm clean 后重新拉起，列表为空。
+  onDetail?.(`${tag}存在 ${before} 台历史连接，清空 dcct 数据…`);
+  const clean = await hdcCommand(hdc, ['-t', sn, 'shell', 'bm', 'clean', '-n', DCCT_BUNDLE_NAME, '-d'], 20000).catch(() => undefined);
+  if (!clean || clean.code !== 0) {
+    return { ok: false, removed: 0, reason: `${tag}bm clean 执行失败：${String(clean?.stdout || clean?.stderr || '').trim().slice(0, 200)}` };
+  }
+
+  await relaunchAndDismiss();
+  const prepAgain = await prepareDcctPage(hdc, sn, swipeArgs, tag, onDetail);
+  if (!prepAgain.ok) return { ok: false, removed: 0, reason: prepAgain.reason };
+  const after = await connectedCount();
+  if (after !== 0) {
+    return { ok: false, removed: 0, reason: `${tag}已执行 bm clean，但列表里仍有 ${after ?? '未知数量'} 台已连接设备` };
+  }
+  onDetail?.(`${tag}历史连接已清空（原 ${before} 台）`);
+  return { ok: true, removed: before };
 }
 
 async function waitDcctConnected({ hdc, boxSn, dutSn, dutIdentifiers, workspace, deadlineMs, onDetail }) {
@@ -1427,6 +1502,21 @@ async function doRun(args) {
             break;
           }
           emitTestProgress(`DCTS 前置通过：${precheck.reason}`, true);
+
+          // 组网前先解绑两端的历史连接（用户要求 2026-11-25）：盒子与 DUT 的 dcct「已连接设备」
+          // 里残留旧机器时，盒子发现列表会混入历史条目、连接码会发给旧设备，配对必然失败。
+          emitTestProgress('DCTS 组网前解绑历史连接（盒子 + 被测设备）…', true);
+          const boxUnbind = await unbindDcctDevices(hdc, testBoxSn, ['400', '1100', '400', '300', '300'], '盒子', (detail) => emitTestProgress(detail, true));
+          if (!boxUnbind.ok) {
+            skipReason = `${boxUnbind.reason}；dcct 组网前必须先清空历史连接，请人工删除后重跑 DCTS`;
+            break;
+          }
+          const dutUnbind = await unbindDcctDevices(hdc, suiteSns[0], ['500', '1200', '500', '300', '300'], '被测设备', (detail) => emitTestProgress(detail, true));
+          if (!dutUnbind.ok) {
+            skipReason = `${dutUnbind.reason}；dcct 组网前必须先清空历史连接，请人工删除后重跑 DCTS`;
+            break;
+          }
+          emitTestProgress(`历史连接已清空（盒子 ${boxUnbind.removed} 台 / 被测设备 ${dutUnbind.removed} 台）`, true);
 
           const dutIdentifiers = [];
           for (const param of ['const.product.name', 'const.product.model', 'const.product.brand']) {
