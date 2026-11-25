@@ -1,6 +1,6 @@
 {
   "name": "xts-reporter-app",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "OpenHarmony XTS 报告上传与自动测试 · 独立 Windows 桌面应用",
   "private": true,
   "type": "module",
@@ -14,7 +14,8 @@
     "start": "npm run build && electron .",
     "app": "electron .",
     "test:layout": "node tests/layout-test.mjs",
-    "test": "node --test tests/xts-plan.test.mjs"
+    "test": "node --test tests/xts-plan.test.mjs",
+    "dist": "npm run build && electron-builder --win portable"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
@@ -28,7 +29,37 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
+  },
+  "build": {
+    "appId": "com.dnake.xts.reporter",
+    "productName": "XTS Reporter",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "dist/renderer/**/*",
+      "scripts/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "XTS-Reporter-${version}-portable.exe"
+    },
+    "portable": {
+      "unpackDirName": "XTS Reporter"
+    }
   }
 }
