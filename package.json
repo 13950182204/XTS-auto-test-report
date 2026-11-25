@@ -12,7 +12,9 @@
     "build:main": "tsc -p tsconfig.electron.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "start": "npm run build && electron .",
-    "app": "electron ."
+    "app": "electron .",
+    "test:layout": "node tests/layout-test.mjs",
+    "test": "node --test tests/xts-plan.test.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

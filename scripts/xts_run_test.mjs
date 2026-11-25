@@ -24,9 +24,11 @@ import {
   parseXdeviceExecLine,
   resolveMinSetDirName,
   sameSubnet,
+  stepReportTag,
   suiteArchiveName,
   suitePlan,
 } from './xts_test_logic.mjs';
+import { writeSynthesizedReportFiles } from './xts_report_writer.mjs';
 
 /**
  * XTS 自动测试编排（串行 ssts → hats → dcts(仅有屏) → acts，套件内多设备并行）。
@@ -42,7 +44,7 @@ import {
  *   XTS_TEST_RESULT={"ok":…,"message":…,"plan":[…],"screens":{…},"rounds":[…],"unpassed":[…]}
  */
 
-const WATCHDOG_IDLE_MS = 60 * 60 * 1000;
+const WATCHDOG_IDLE_MS = 30 * 60 * 1000;
 const RESULT_POLL_MS = 5000;
 const PROGRESS_EMIT_MS = 1500;
 const HDC_TIMEOUT_MS = 15000;
@@ -70,6 +72,8 @@ function usage() {
 --box-wait-ms 盒子连通预检等待上限（默认 300000=5 分钟，超时跳过 DCTS）。
 --suites     只跑指定套件（逗号分隔子集，如 --suites acts 或 --suites ssts,acts）。
 --modules    覆盖最小测试集，直接用给定模块清单（分号分隔；配合 --suites 做单模块冒烟）。
+--only-failed 增量模式：对选中的每个套件，读最新归档报告（<workbook>/report/<SUITE>/report-<n>），
+             只跑「失败 + 没跑完」的模块；最新报告全部通过的套件自动跳过。ssts 是任务模式，仍整跑。
 --dry-run    只探测设备、生成配置与清单并打印将执行的命令，不真正跑测试。
 说明：ssts / dcts 固定单机执行（取第一台 SN）；dcts 首轮会自动执行套件 resource/ 下的
 dcts_resource.bat 安装测试工具（bat 会重启设备并等待回线；hdc 调用自动注入 -t 指定目标机）；
@@ -158,6 +162,75 @@ function isFile(file) {
   return fs.stat(file).then((stat) => stat.isFile()).catch(() => false);
 }
 
+/** xdevice 套件目录名（--testcases 应指向这些目录的父目录）。 */
+const SUITE_DIR_NAMES = ['ssts', 'hats', 'dcts', 'acts'];
+
+/**
+ * 归一化「测试用例路径」。
+ * 用户常常把 `…\testcase\ssts`（套件目录，里面有 run.bat）或它的 config 子目录填进来，
+ * 而脚本要的是**套件根** `…\testcase`；不归一化就会报「测试用例路径下没有 ssts 套件目录：
+ * …\testcase\ssts\ssts」，看起来像 SSTS 跑不了，其实只是路径多了一层。
+ */
+async function resolveSuiteRoot(rawPath) {
+  const requested = path.resolve(rawPath);
+  let directory = requested;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (await isDirectory(path.join(directory, 'ssts', 'config'))) {
+      return { root: directory, note: directory === requested ? '' : `测试用例路径已归一到套件根：${requested} → ${directory}` };
+    }
+    const isSuite = SUITE_DIR_NAMES.includes(path.basename(directory).toLowerCase())
+      && (await isFile(path.join(directory, 'config', 'user_config.xml')) || await isFile(path.join(directory, 'run.bat')));
+    if (isSuite) {
+      const parent = path.dirname(directory);
+      return { root: parent, note: `测试用例路径指向套件目录，已按套件根处理：${requested} → ${parent}` };
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return { root: requested, note: '' };
+}
+
+/**
+ * 确认 `python -m xdevice` 可用；不可用时按 run.bat 的做法就地修复一次：
+ * ① 补 setuptools（提供 pkg_resources，xdevice/__init__.py 依赖它）；
+ * ② 用套件 tools/ 下的离线包 --user 安装；
+ * ③ 再自检，仍失败就把解释器路径与真实报错抛出来，而不是让测试「莫名其妙跑不起来」。
+ */
+async function ensureXdeviceReady({ python, testcaseRoot, onDetail }) {
+  const probe = ['-c', 'import xdevice, pkg_resources; print("xdevice-ok")'];
+  const first = await runCommand(python, probe, { timeoutMs: 60000 });
+  if (first.code === 0) return;
+  const reason = (first.stderr || first.stdout || `退出码 ${first.code}`).trim().split(/\r?\n/).filter(Boolean).pop() || '';
+  onDetail(`xdevice 自检未通过（${reason}），按 run.bat 的方式修复依赖…`);
+  const setuptools = await runCommand(python, ['-m', 'pip', 'install', '--user', 'setuptools==75.8.0',
+    '--timeout', '20', '--retries', '1', '--disable-pip-version-check'], { timeoutMs: 240000 });
+  const tarballs = [];
+  for (const suite of SUITE_DIR_NAMES) {
+    const toolsDir = path.join(testcaseRoot, suite, 'tools');
+    for (const name of await fs.readdir(toolsDir).catch(() => [])) {
+      if (name.endsWith('.tar.gz') || name.endsWith('.egg')) tarballs.push(path.join(toolsDir, name));
+    }
+    if (tarballs.length > 0) break; // 各套件 tools 内容相同，取第一个有内容的
+  }
+  for (const tarball of tarballs) {
+    onDetail(`安装离线包 ${path.basename(tarball)}`);
+    await runCommand(python, ['-m', 'pip', 'install', '--user', tarball, '--disable-pip-version-check'], { timeoutMs: 300000 });
+  }
+  const second = await runCommand(python, probe, { timeoutMs: 60000 });
+  if (second.code === 0) {
+    onDetail('xdevice 依赖已修复，继续执行。');
+    return;
+  }
+  const detail = (second.stderr || second.stdout || '').trim().slice(-600);
+  throw new TestFlowError(
+    `python -m xdevice 无法启动（解释器：${python}）。自检输出：${detail || '（无输出）'}。`
+    + `可在命令行手动执行：${python} -m pip install --user setuptools==75.8.0`
+    + (tarballs[0] ? ` 与 ${python} -m pip install --user "${tarballs[0]}"` : '')
+    + ' 后重试。',
+  );
+}
+
 /**
  * 定位本轮 xdevice 报告目录。`-rp` 模式下报告**直接落在给定根目录**
  * （log/ result/ summary_report.xml…，实测如此）；默认布局才是 <root>/<时间戳>/。
@@ -191,6 +264,20 @@ async function finishedModuleNames(reportDirectory) {
   return entries
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.xml'))
     .map((entry) => entry.name.slice(0, -4).toLowerCase());
+}
+
+/** result/ 里「真正跑过且有用例」的模块（根节点 tests>0 的 result XML）；文件名小写。 */
+async function finishedAndPassedModules(reportDirectory) {
+  const dir = reportDirectory ? path.join(reportDirectory, REPORT_RESULT_DIR) : '';
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  const passed = new Set();
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.xml')) continue;
+    const text = await fs.readFile(path.join(dir, entry.name), 'utf8').catch(() => '');
+    const tests = Number((text.match(/<testsuites\b[^>]*?\stests="(\d+)"/) ?? [])[1]);
+    if (Number.isFinite(tests) && tests > 0) passed.add(entry.name.slice(0, -4).toLowerCase());
+  }
+  return passed;
 }
 
 function killTree(pid) {
@@ -342,6 +429,7 @@ function findTextInUiTree(node, keywords, results = []) {
   return results;
 }
 
+
 async function uitestFindByText(hdc, target, keywords, tag) {
   const remote = `/data/local/tmp/oh-uitest-${tag || 'pair'}.json`;
   const dumped = await hdcCommand(hdc, ['-t', target, 'shell', 'uitest', 'dumpLayout', '-p', remote], 15000).catch(() => undefined);
@@ -365,147 +453,428 @@ async function uitestClick(hdc, target, x, y) {
   return hdcCommand(hdc, ['-t', target, 'shell', 'uitest', 'uiInput', 'click', String(Math.round(x)), String(Math.round(y))], 10000);
 }
 
-async function uitestInputText(hdc, target, x, y, text) {
-  return hdcCommand(hdc, ['-t', target, 'shell', 'uitest', 'uiInput', 'inputText', String(Math.round(x)), String(Math.round(y)), text], 10000);
+/**
+ * 布局 JSON 摊平成节点列表（type/text/checked/中心坐标）。
+ */
+function flattenUiTree(node, results = []) {
+  if (!node || typeof node !== 'object') return results;
+  const attrs = node.attributes ?? node;
+  const bounds = parseBounds(attrs.bounds);
+  results.push({
+    type: String(attrs.type ?? ''),
+    text: String(attrs.text ?? '').trim(),
+    checked: attrs.checked === true || attrs.checked === 'true',
+    bounds,
+    x: bounds ? bounds.x : 0,
+    y: bounds ? bounds.y : 0,
+  });
+  for (const child of node.children ?? []) flattenUiTree(child, results);
+  return results;
 }
 
-async function clickByText(hdc, target, keywords, tag) {
-  const results = await uitestFindByText(hdc, target, keywords, tag);
-  if (results.length === 0) return false;
-  await uitestClick(hdc, target, results[0].x, results[0].y);
+async function dumpUiNodes(hdc, sn) {
+  const raw = await dumpBoxLayout(hdc, sn).catch(() => '');
+  if (!raw || !raw.trim().startsWith('{')) return [];
+  try { return flattenUiTree(JSON.parse(raw)); } catch { return []; }
+}
+
+/**
+ * dcct 的系统权限弹窗放行（bm clean 清应用数据会连授权一起清掉，dcct 首次启动会连弹
+ * 「使用多设备协同？」「访问你的位置？」等多道系统弹窗挡住页面）——按优先级点放行按钮，
+ * 循环清完弹窗队列。位置类弹窗优先「仅使用期间允许」，没有再退「允许本次使用」。
+ */
+const PERMISSION_ALLOW_TEXTS = ['仅使用期间允许', '使用期间允许', '始终允许', '允许本次使用', '允许'];
+async function dismissDcctPermissionDialog(hdc, sn, onDetail) {
+  for (let round = 0; round < 5; round += 1) {
+    const nodes = await dumpUiNodes(hdc, sn);
+    const allow = nodes.find((node) => node.type === 'Button' && PERMISSION_ALLOW_TEXTS.includes(node.text));
+    if (!allow) return round > 0;
+    onDetail?.(`dcct 弹出系统权限弹窗，点「${allow.text}」…`);
+    await uitestClick(hdc, sn, allow.x, allow.y);
+    await sleep(1500);
+  }
   return true;
 }
 
 /**
- * 自动执行 dcct 配对流程（双端 uitest 驱动，不等人工）。
- * 步骤：拉起 dcct → 勾 Wi-Fi → 下一步 → 允许被发现 → 发现 → 点击目标设备 →
- *       DUT 永远信任 → 读 PIN → 盒子输 PIN → 等待连接。
- * 任一步骤失败（超时找不到元素）→ 整体配对失败 → 跳过 DCTS。
+ * 唤醒并解锁屏幕（盒子/被测设备锁屏极快，每次交互前都要做）。
+ * 先唤醒后判断：已解锁就**不要滑动**（滑动会把 dcct 页面滚走），只有真锁屏才上滑。
+ * 返回 true = 解锁后布局里已不是锁屏。
  */
-async function automateDcctPairing({ hdc, boxSn, dutSn, dutIp, workspace, deadlineMs, onDetail }) {
-  const startedAt = Date.now();
-  const dutIdentifiers = [];
-  for (const param of ['const.product.name', 'const.product.model', 'const.product.brand']) {
-    const value = await deviceParam(hdc, dutSn, param).catch(() => '');
-    if (value && value.length >= 2 && !dutIdentifiers.includes(value)) dutIdentifiers.push(value);
+async function wakeUnlockScreen(hdc, sn, swipeArgs, onDetail) {
+  const wake = () => hdcCommand(hdc, ['-t', sn, 'shell', 'power-shell', 'wakeup'], 5000).catch(() => {});
+  await wake();
+  await sleep(800);
+  let nodes = await dumpUiNodes(hdc, sn);
+  if (!nodes.some((node) => node.text === '上滑解锁')) return true;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    onDetail?.(`屏幕在锁屏，上滑解锁（第 ${attempt + 1} 次）…`);
+    await hdcCommand(hdc, ['-t', sn, 'shell', 'uitest', 'uiInput', 'swipe', ...(swipeArgs ?? ['400', '1100', '400', '300', '300'])], 8000).catch(() => {});
+    await sleep(1200);
+    await wake();
+    await sleep(600);
+    await hdcCommand(hdc, ['-t', sn, 'shell', 'power-shell', 'setmode', '602'], 5000).catch(() => {});
+    nodes = await dumpUiNodes(hdc, sn);
+    if (!nodes.some((node) => node.text === '上滑解锁')) return true;
+    await sleep(1000);
+  }
+  return false;
+}
+
+/** 找 dcct 配置页第 1 页的 Wi-Fi 开关（Toggle 紧挨着 Wi-Fi 文字行）。 */
+/** 开关节点：Toggle/Switch/CheckBox（不同设备/版本渲染类型不同）。 */
+function isToggleNode(node) {
+  return node.type === 'Toggle' || node.type === 'Switch' || node.type === 'CheckBox';
+}
+
+/** 开关与标签同行判定（宽屏上开关在行最右侧，但中心 y 一致）。 */
+function sameRow(a, b) {
+  return Math.abs(a.y - b.y) < 80;
+}
+
+function findWifiToggle(nodes) {
+  const wifiText = nodes.find((node) => node.text === 'Wi-Fi');
+  if (!wifiText) return undefined;
+  return nodes.find((node) => node !== wifiText && isToggleNode(node) && sameRow(node, wifiText));
+}
+
+/** 找「允许被发现」开关。 */
+function findDiscoverableToggle(nodes) {
+  const label = nodes.find((node) => node.text === '允许被发现');
+  if (!label) return undefined;
+  return nodes.find((node) => node !== label && isToggleNode(node) && sameRow(node, label));
+}
+
+/**
+ * 把 dcct 从第 1 页（组网方式选择）推进到第 2 页（允许被发现/设备列表），
+ * 并确保 Wi-Fi 开关与「允许被发现」开关都已打开。每步点击后都回读布局验证。
+ */
+async function prepareDcctPage(hdc, sn, swipeArgs, tag, onDetail) {
+  if (!await wakeUnlockScreen(hdc, sn, swipeArgs, onDetail)) {
+    return { ok: false, reason: `${tag}屏幕无法解锁（锁屏超时）` };
+  }
+  await hdcCommand(hdc, ['-t', sn, 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 10000).catch(() => {});
+  // 等 dcct 前台起来（冷启动可能要几秒；权限弹窗挡路时先放行）
+  let nodes = [];
+  for (let wait = 0; wait < 5; wait += 1) {
+    await sleep(2000);
+    nodes = await dumpUiNodes(hdc, sn);
+    if (nodes.some((node) => node.text.includes('请选择组网方式') || node.text === '允许被发现')) break;
+    if (await dismissDcctPermissionDialog(hdc, sn, onDetail)) {
+      nodes = await dumpUiNodes(hdc, sn);
+      if (nodes.some((node) => node.text.includes('请选择组网方式') || node.text === '允许被发现')) break;
+    }
+    await hdcCommand(hdc, ['-t', sn, 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 10000).catch(() => {});
+    onDetail?.(`${tag} dcct 未到前台，重试拉起…`);
   }
 
-  // —— 1. 唤醒并解锁盒子屏幕（锁屏时 uitest dump 到的是锁屏而非 dcct UI） ——
-  onDetail?.('唤醒并解锁盒子屏幕…');
-  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'wakeup'], 10000).catch(() => {});
-  await sleep(1000);
-  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'uitest', 'uiInput', 'swipe', '400', '1100', '400', '300', '300'], 10000).catch(() => {});
-  await sleep(2000);
-  // 保持屏幕常亮（602 = 常亮模式）
-  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'setmode', '602'], 10000).catch(() => {});
-  // 每次交互前唤醒一次，防止配对过程中屏幕再次锁定
-  const wakeBox = async () => {
-    await hdcCommand(hdc, ['-t', boxSn, 'shell', 'power-shell', 'wakeup'], 5000).catch(() => {});
+  // —— 第 1 页：勾 Wi-Fi → 下一步 ——
+  if (nodes.some((node) => node.text.includes('请选择组网方式'))) {
+    const wifiToggle = findWifiToggle(nodes);
+    if (!wifiToggle) return { ok: false, reason: `${tag} dcct 第 1 页没有 Wi-Fi 开关` };
+    if (!wifiToggle.checked) {
+      for (let retry = 0; retry < 2; retry += 1) {
+        await uitestClick(hdc, sn, wifiToggle.x, wifiToggle.y);
+        await sleep(1500);
+        nodes = await dumpUiNodes(hdc, sn);
+        if (findWifiToggle(nodes)?.checked) break;
+      }
+      if (!findWifiToggle(nodes)?.checked) return { ok: false, reason: `${tag} Wi-Fi 开关点击后未变为已选` };
+    }
+    const nextButton = nodes.find((node) => node.text === '下一步' && node.type === 'Button');
+    if (!nextButton) return { ok: false, reason: `${tag} dcct 第 1 页没有「下一步」按钮` };
+    await uitestClick(hdc, sn, nextButton.x, nextButton.y);
+    // 页面切换可能比一次 dump 慢——轮询等「允许被发现」出现
+    nodes = [];
+    for (let wait = 0; wait < 5; wait += 1) {
+      await sleep(2000);
+      nodes = await dumpUiNodes(hdc, sn);
+      if (nodes.some((node) => node.text === '允许被发现')) break;
+    }
+    if (!nodes.some((node) => node.text === '允许被发现')) return { ok: false, reason: `${tag} 点击「下一步」后没有进入设备列表页` };
+  }
+
+  // —— 第 2 页：确保「允许被发现」打开（dump 偶发不完整——找不到开关时重试再判） ——
+  let discoverable = findDiscoverableToggle(nodes);
+  for (let retry = 0; !discoverable && retry < 3; retry += 1) {
+    await sleep(1500);
+    nodes = await dumpUiNodes(hdc, sn);
+    discoverable = findDiscoverableToggle(nodes);
+  }
+  if (!discoverable) return { ok: false, reason: `${tag} dcct 设备列表页没有「允许被发现」开关` };
+  if (!discoverable.checked) {
+    for (let retry = 0; retry < 2; retry += 1) {
+      await uitestClick(hdc, sn, discoverable.x, discoverable.y);
+      await sleep(1500);
+      nodes = await dumpUiNodes(hdc, sn);
+      if (findDiscoverableToggle(nodes)?.checked) break;
+    }
+    if (!findDiscoverableToggle(nodes)?.checked) return { ok: false, reason: `${tag} 「允许被发现」开关点击后未变为已选` };
+  }
+  return { ok: true, nodes };
+}
+
+/**
+ * 自动执行 dcct 配对流程（双端 uitest 驱动，逐步验证，不靠猜）。
+ * 流程：DUT/盒子各自 dcct 配置页推进（Wi-Fi → 下一步 → 允许被发现）→ 盒子发现
+ *       → 逐个候选点击 + 在目标 DUT 上验证信任弹窗（同型号多设备时确定唯一目标）
+ *       → DUT 点「始终信任」→ 聚合 DUT 分离式连接码数字 → 盒子软键盘逐位输入
+ *       → 连接确认。任一步验证不过 → 配对失败 → 跳过 DCTS。
+ */
+async function performDcctPairing({ hdc, boxSn, dutSn, dutIdentifiers, workspace, deadlineMs, onDetail }) {
+  const startedAt = Date.now();
+  const remaining = () => Math.max(0, deadlineMs - (Date.now() - startedAt));
+
+  // —— 盒子侧：配置页推进（被测设备不用启动 dcct：信任弹窗与连接码是系统级弹窗，会自己出现） ——
+  onDetail?.('盒子：dcct 配置页推进（Wi-Fi → 下一步 → 允许被发现）…');
+  const boxPrep = await prepareDcctPage(hdc, boxSn, ['400', '1100', '400', '300', '300'], '盒子', onDetail);
+  if (!boxPrep.ok) return { connected: false, reason: boxPrep.reason };
+  if (remaining() <= 0) return { connected: false, reason: '配对超时（配置页阶段耗尽时限）' };
+
+  // —— DUT 侧：只推进 dcct 配置页到第 2 页并打开「允许被发现」，不做任何配对操作
+  // （发现/点击目标在盒子上，信任弹窗与连接码是系统级弹窗）。DUT 重启后 dcct 会回到
+  // 第 1 页，「允许被发现」是关的——此时盒子发起连接不会触发信任弹窗（实测 2026-11-18）。
+  onDetail?.('被测设备：推进 dcct 配置页并打开「允许被发现」…');
+  const dutPrep = await prepareDcctPage(hdc, dutSn, ['500', '1200', '500', '300', '300'], '被测设备', onDetail);
+  if (!dutPrep.ok) return { connected: false, reason: dutPrep.reason };
+  if (remaining() <= 0) return { connected: false, reason: '配对超时（被测设备配置页阶段耗尽时限）' };
+
+  // —— 盒子：收集候选。可用设备列表只显示 3 条且多台同名设备会轮换——条目名全是
+  // 「Nurse Terminal」没法区分，改用条目下方的唯一设备 ID 行（长十六进制串）识别，
+  // 并滑动列表补扫屏幕外的条目、按 ID 去重合并。
+  const scanDeviceEntries = (nodes) => {
+    const availableLabel = nodes.find((node) => node.text === '可用设备');
+    return nodes.filter((node) => /^[0-9a-f]{10,}$/i.test(node.text) && (!availableLabel || node.y > availableLabel.y))
+      .filter((node, index, all) => all.findIndex((item) => item.text === node.text) === index);
+  };
+  const swipeList = async (fromY, toY) => {
+    await hdcCommand(hdc, ['-t', boxSn, 'shell', 'uitest', 'uiInput', 'swipe', '400', String(fromY), '400', String(toY), '600'], 8000).catch(() => {});
+    await sleep(1500);
+  };
+  const collectCandidates = async () => {
+    for (let dump = 0; dump < 4; dump += 1) {
+      await wakeUnlockScreen(hdc, boxSn, ['400', '1100', '400', '300', '300'], onDetail);
+      const nodes = await dumpUiNodes(hdc, boxSn);
+      const merged = scanDeviceEntries(nodes);
+      if (merged.length > 0) {
+        // 滑动补扫屏幕外的条目（列表每次只渲染可见的几条）
+        for (let scroll = 0; scroll < 2; scroll += 1) {
+          await swipeList(1150, 500);
+          const more = scanDeviceEntries(await dumpUiNodes(hdc, boxSn));
+          for (const item of more) if (!merged.some((m) => m.text === item.text)) merged.push(item);
+          if (more.length === 0) break;
+        }
+        await swipeList(700, 1200);
+        return merged;
+      }
+      // 列表页发现按钮有两态：「发现」（未开始）/「停止」（发现进行中）——
+      // 没有条目时：有「发现」就点开始，「停止」态先停再等下一轮点「发现」。
+      const discover = nodes.find((node) => node.text === '发现');
+      const stop = nodes.find((node) => node.text === '停止');
+      if (discover) {
+        await uitestClick(hdc, boxSn, discover.x, discover.y);
+        await sleep(4000);
+      } else if (stop) {
+        await uitestClick(hdc, boxSn, stop.x, stop.y);
+        await sleep(2000);
+      } else {
+        await sleep(3000);
+      }
+    }
+    return [];
   };
 
-  // —— 2. 拉起 dcct on box ——
-  onDetail?.('正在盒子上拉起 dcct 应用…');
-  await hdcCommand(hdc, ['-t', boxSn, 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 15000).catch(() => undefined);
-  await sleep(3000);
-
-  // —— 2. 盒子 UI 配对步骤 ——
-  const boxSteps = [
-    { keywords: ['Wi-Fi', 'wifi', 'WLAN'], wait: 2000, desc: '勾选 Wi-Fi' },
-    { keywords: ['下一步'], wait: 2000, desc: '点击下一步' },
-    { keywords: ['允许被发现'], wait: 2000, desc: '打开允许被发现' },
-    { keywords: ['发现', '搜索', '扫描'], wait: 3000, desc: '触发设备发现' },
-  ];
-  for (const step of boxSteps) {
-    let clicked = false;
-    for (let retry = 0; retry < 3; retry++) {
-      try {
-        clicked = await clickByText(hdc, boxSn, step.keywords, `box-${step.desc}`);
-        if (clicked) break;
-      } catch { /* 重试 */ }
-      await sleep(2000);
-    }
-    onDetail?.(clicked ? `盒子 dcct 自动配对：${step.desc} ✓` : `盒子 dcct：未找到「${step.desc}」（可能已完成），跳过`);
-    await sleep(step.wait);
-  }
-
-  // —— 3. 等待目标设备出现在发现列表，点击它 ——
-  onDetail?.('等待目标设备出现在盒子 dcct 发现列表…');
-  let dutClicked = false;
-  const dutDeadline = Date.now() + Math.min(deadlineMs, 120000);
-  while (Date.now() < dutDeadline && !dutClicked) {
-    await wakeBox();
-    const results = await uitestFindByText(hdc, boxSn, dutIdentifiers, 'box-dut-list').catch(() => []);
-    if (results.length > 0) {
-      await uitestClick(hdc, boxSn, results[0].x, results[0].y);
-      dutClicked = true;
-      onDetail?.(`已点击目标设备（${results[0].text}），等待 DUT 信任弹窗与 PIN…`);
-      break;
-    }
-    await clickByText(hdc, boxSn, ['发现', '刷新', '搜索'], 'box-refresh').catch(() => {});
-    await sleep(5000);
-  }
-  if (!dutClicked) {
-    return { connected: false, reason: `盒子上未发现目标设备（${dutIdentifiers.join(' / ')}），请确认同网段且 dcct 允许被发现` };
-  }
-
-  // —— 4. DUT：等待「永远信任」弹窗并点击 ——
-  await sleep(3000);
+  // —— 收集候选 → 逐个试 → 一批都不是目标就重启一轮发现再扫。
+  // 可用设备列表只显示 3 条且会轮换，目标条目不一定恰好在扫描瞬间可见（实测 2026-11-18）。
   let trusted = false;
-  const trustDeadline = Date.now() + 30000;
-  while (Date.now() < trustDeadline && !trusted) {
-    const results = await uitestFindByText(hdc, dutSn, ['永远信任', '始终信任'], 'dut-trust').catch(() => []);
-    if (results.length > 0) {
-      await uitestClick(hdc, dutSn, results[0].x, results[0].y);
-      trusted = true;
-      onDetail?.('已在被测设备上点击「永远信任」');
-      break;
+  let rescanCount = 0;
+  for (let cycle = 0; cycle < 4 && !trusted && remaining() > 0; cycle += 1) {
+    let candidates = [];
+    for (let attempt = 0; attempt < 3 && candidates.length === 0; attempt += 1) {
+      candidates = await collectCandidates();
+      if (candidates.length === 0) {
+        onDetail?.('盒子上没有目标候选设备，重新推进 dcct 配置页…');
+        const rep = await prepareDcctPage(hdc, boxSn, ['400', '1100', '400', '300', '300'], '盒子', onDetail);
+        if (!rep.ok) return { connected: false, reason: rep.reason };
+      }
     }
-    await sleep(3000);
-  }
-  if (!trusted) onDetail?.('未检测到「永远信任」弹窗（可能已信任过），继续');
+    if (candidates.length === 0) break;
+    onDetail?.(cycle === 0
+      ? `盒子发现 ${candidates.length} 台同名设备，逐个候选点击并在目标被测设备上验证…`
+      : `第 ${cycle + 1} 轮扫描（发现列表会轮换），逐个候选验证…`);
 
-  // —— 5. DUT：读取 PIN 码 ——
-  await sleep(2000);
+    for (let index = 0; index < candidates.length && !trusted; index += 1) {
+      if (remaining() <= 0) break;
+      const candidate = candidates[index];
+      onDetail?.(`点击候选 ${index + 1}/${candidates.length}（${candidate.text} @ y=${candidate.y}）…`);
+      await wakeUnlockScreen(hdc, boxSn, ['400', '1100', '400', '300', '300'], onDetail);
+      // 唤醒滑动可能把界面顶回去——按唯一 ID 重新定位候选（列表轮换时可能滚到屏幕外）
+      const nodes = await dumpUiNodes(hdc, boxSn);
+      const label = nodes.find((node) => node.text === '可用设备');
+      let target = nodes.find((node) => node.text === candidate.text && (!label || node.y > label.y));
+      if (!target) {
+        await swipeList(1150, 500);
+        const scrolled = await dumpUiNodes(hdc, boxSn);
+        const label2 = scrolled.find((node) => node.text === '可用设备');
+        target = scrolled.find((node) => node.text === candidate.text && (!label2 || node.y > label2.y));
+      }
+      if (!target) {
+        rescanCount += 1;
+        if (rescanCount > 2) break;
+        onDetail?.('候选条目不在列表里（列表刷新过），重新发现…');
+        candidates = await collectCandidates();
+        if (candidates.length === 0) break;
+        index -= 1;
+        continue;
+      }
+      await uitestClick(hdc, boxSn, target.x, target.y);
+      // 目标 DUT 上等信任弹窗（6s 内出现才算点对了设备）；DUT 屏幕锁定时先唤醒解锁
+      let trustButton;
+      for (let wait = 0; wait < 3 && !trustButton; wait += 1) {
+        await sleep(1500);
+        await wakeUnlockScreen(hdc, dutSn, ['500', '1200', '500', '300', '300']).catch(() => {});
+        const dutNodes = await dumpUiNodes(hdc, dutSn);
+        trustButton = dutNodes.find((node) => node.text === '始终信任');
+        if (!trustButton && dutNodes.some((node) => node.text.includes('是否信任此应用'))) {
+          trustButton = dutNodes.find((node) => node.text.includes('信任') && node.type === 'Button' && !node.text.includes('不信任'));
+        }
+      }
+      if (trustButton) {
+        onDetail?.(`目标被测设备弹出信任请求，点击「${trustButton.text}」…`);
+        await uitestClick(hdc, dutSn, trustButton.x, trustButton.y);
+        trusted = true;
+        break;
+      }
+      // 不是目标设备：盒子可能停在连接码页 → 取消回列表
+      const boxNodes = await dumpUiNodes(hdc, boxSn);
+      if (boxNodes.some((node) => node.text === '请输入对端设备上显示的连接码')) {
+        const cancel = boxNodes.find((node) => node.text === '取消' && node.type === 'Button');
+        if (cancel) await uitestClick(hdc, boxSn, cancel.x, cancel.y);
+        await sleep(1500);
+      }
+    }
+    if (!trusted) {
+      onDetail?.('这一批候选都不是目标被测设备，重启一轮发现再扫…');
+      const cycleNodes = await dumpUiNodes(hdc, boxSn);
+      const stop = cycleNodes.find((node) => node.text === '停止');
+      if (stop) {
+        await uitestClick(hdc, boxSn, stop.x, stop.y);
+        await sleep(1500);
+      }
+      const disc = (await dumpUiNodes(hdc, boxSn)).find((node) => node.text === '发现');
+      if (disc) {
+        await uitestClick(hdc, boxSn, disc.x, disc.y);
+        await sleep(4000);
+      }
+    }
+  }
+  if (!trusted) return { connected: false, reason: '候选设备上都没有出现目标被测设备的信任弹窗（发现列表已重启重试多轮），无法确定目标设备' };
+
+  // —— 连接码阶段：DUT 显示分离式数字 → 盒子软键盘逐位输入（弹窗 ~30s 超时） ——
+  onDetail?.('读取被测设备连接码并在盒子上输入…');
   let pin = '';
-  const pinRaw = await dumpBoxLayout(hdc, dutSn, workspace).catch(() => '');
-  const pinMatch = pinRaw.match(/\b(\d{4,8})\b/);
-  if (pinMatch) pin = pinMatch[1];
-
-  // —— 6. 盒子：输入 PIN ——
-  if (pin) {
-    onDetail?.(`读取到 PIN ${pin}，正在盒子上输入…`);
-    await sleep(2000);
-    const pinFields = await uitestFindByText(hdc, boxSn, ['PIN', 'pin', '配对码', '输入'], 'box-pin').catch(() => []);
-    if (pinFields.length > 0) {
-      await uitestInputText(hdc, boxSn, pinFields[0].x, pinFields[0].y, pin);
-    } else {
-      await uitestInputText(hdc, boxSn, 540, 800, pin).catch(() => {});
+  const pinDeadline = Date.now() + 12000;
+  while (Date.now() < pinDeadline && !pin) {
+    await wakeUnlockScreen(hdc, dutSn, ['500', '1200', '500', '300', '300']).catch(() => {});
+    const dutNodes = await dumpUiNodes(hdc, dutSn);
+    if (dutNodes.some((node) => node.text === '连接码')) {
+      pin = dutNodes.filter((node) => /^[0-9]$/.test(node.text)).sort((a, b) => a.x - b.x).map((node) => node.text).join('');
     }
-    await sleep(1000);
-    await clickByText(hdc, boxSn, ['确认', '配对', '确定'], 'box-pin-ok').catch(() => {});
-    onDetail?.(`PIN ${pin} 已输入`);
-  } else {
-    onDetail?.('未读取到 PIN（可能无需 PIN），继续等待连接');
+    if (!pin) await sleep(1500);
   }
+  if (!pin) return { connected: false, reason: '点击「始终信任」后没读到连接码（配对页未出现或已超时）' };
+  onDetail?.(`连接码 ${pin}，盒子上逐位输入…`);
 
-  // —— 7. 等待连接建立 ——
+  let entered = false;
+  const inputDeadline = Date.now() + 20000;
+  while (Date.now() < inputDeadline && !entered) {
+    const boxNodes = await dumpUiNodes(hdc, boxSn);
+    if (!boxNodes.some((node) => node.text === '请输入对端设备上显示的连接码')) break;
+    const field = boxNodes.find((node) => node.type === 'TextInput');
+    if (!field) break;
+    await uitestClick(hdc, boxSn, field.x, field.y);
+    await sleep(1200);
+    const pageNodes = await dumpUiNodes(hdc, boxSn);
+    const digitFilter = (node) => /^[0-9]$/.test(node.text) && field.bounds && node.y > field.bounds.y + 60;
+    let keyNodes = pageNodes.filter(digitFilter);
+    // QWERTY 键盘上数字只是字母键上方的小号长按提示（高 ~14px），直接点会按到字母；
+    // 检测到数字提示与字母键同行共存时先点「?123」切到数字键盘再取按键。
+    const qwertyLetters = pageNodes.filter((node) => /^[a-z]$/.test(node.text) && field.bounds && node.y > field.bounds.y + 60);
+    if (keyNodes.length > 0 && qwertyLetters.length > 0
+      && keyNodes.some((digit) => qwertyLetters.some((letter) => letter.x < digit.x + 20 && digit.x < letter.x + 20))) {
+      const modeKey = pageNodes.find((node) => node.text === '?123' && field.bounds && node.y > field.bounds.y + 60);
+      if (modeKey) {
+        onDetail?.('软键盘是字母键盘，点「?123」切换数字键盘…');
+        await uitestClick(hdc, boxSn, modeKey.x, modeKey.y);
+        await sleep(1200);
+        keyNodes = (await dumpUiNodes(hdc, boxSn)).filter(digitFilter);
+      }
+    }
+    if (keyNodes.length === 0) { await sleep(1500); continue; }
+    for (const digit of pin) {
+      const key = keyNodes.find((node) => node.text === digit);
+      if (!key) { onDetail?.(`软键盘上没有数字键 ${digit}（可能是符号键盘），跳过输入…`); break; }
+      await uitestClick(hdc, boxSn, key.x + 4, key.y + 22);
+      await sleep(450);
+    }
+    await sleep(1500);
+    const after = await dumpUiNodes(hdc, boxSn);
+    entered = !after.some((node) => node.text === '请输入对端设备上显示的连接码')
+      || after.some((node) => /已连接|连接成功/i.test(node.text))
+      || (after.find((node) => node.type === 'TextInput')?.text ?? '').includes(pin);
+    if (!entered) await sleep(2000);
+  }
+  if (!entered) onDetail?.('连接码输入未能确认（页面未跳转），继续等待连接状态…');
+
+  // —— 连接确认 ——
   onDetail?.('等待连接建立…');
-  const connectDeadline = Date.now() + 30000;
-  while (Date.now() < connectDeadline) {
-    await wakeBox();
-    const layout = await dumpBoxLayout(hdc, boxSn, workspace).catch(() => '');
-    if (layout && /已连接|connected|连接成功/i.test(layout)) {
-      return { connected: true, reason: 'dcct 配对成功，盒子与被测设备已连接' };
-    }
-    const dutLayout = await dumpBoxLayout(hdc, dutSn, workspace).catch(() => '');
-    if (dutLayout && /已连接|connected|连接成功/i.test(dutLayout)) {
-      return { connected: true, reason: 'dcct 配对成功（DUT 侧确认）' };
-    }
-    await sleep(5000);
-  }
-  // 配对步骤全部完成，即使 UI 未显式"已连接"，也视为配对成功——DCTS 模块自身验证
-  return { connected: true, reason: 'dcct 配对流程已自动执行完毕（PIN 已输入/无 PIN），DCTS 模块将验证连接质量' };
+  const confirm = await waitDcctConnected({
+    hdc,
+    boxSn,
+    dutSn,
+    dutIdentifiers,
+    workspace,
+    deadlineMs: Math.max(30000, Math.min(remaining(), 120000)),
+    onDetail,
+  });
+  return confirm.connected
+    ? { connected: true, reason: `dcct 配对完成，${confirm.reason}` }
+    : { connected: false, reason: `配对步骤已执行（信任+连接码），但${confirm.reason}` };
 }
+
+/**
+ * 连接确认：轮询盒子/被测设备两侧 dcct UI，确认配对连接真正建立后 DCTS 才开测。
+ * 判定必须严格：设备条目要出现在「已连接设备」分区标题之下（标题与「可用设备」标题之间），
+ * 不能用整页文本包含——第 2 页常驻「已连接设备」标题和「可用设备」候选，文本包含永远误报。
+ */
+function deviceInConnectedSection(nodes, identifiers) {
+  const label = nodes.find((node) => node.text === '已连接设备');
+  if (!label) return false;
+  const nextLabel = nodes.find((node) => node.text === '可用设备' && node.y > label.y);
+  return nodes.some((node) => identifiers.includes(node.text)
+    && node.y > label.y
+    && (nextLabel ? node.y < nextLabel.y : true));
+}
+
+async function waitDcctConnected({ hdc, boxSn, dutSn, dutIdentifiers, workspace, deadlineMs, onDetail }) {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    const boxNodes = await dumpUiNodes(hdc, boxSn).catch(() => []);
+    const dutNodes = await dumpUiNodes(hdc, dutSn).catch(() => []);
+    const boxSeesDut = boxNodes.length > 0 && deviceInConnectedSection(boxNodes, dutIdentifiers);
+    const dutSeesBox = dutNodes.length > 0 && deviceInConnectedSection(dutNodes, ['Bed Terminal']);
+    if (boxSeesDut || dutSeesBox) {
+      const reason = boxSeesDut
+        ? `盒子 dcct「已连接设备」分区出现被测设备（${dutIdentifiers[0]}）`
+        : '被测设备 dcct「已连接设备」分区出现盒子';
+      return { connected: true, reason };
+    }
+    onDetail?.(`等待连接确认…剩余 ${Math.max(0, Math.round((deadline - Date.now()) / 1000))}s`);
+    await sleep(BOX_POLL_INTERVAL_MS);
+  }
+  return { connected: false, reason: '超时未确认连接（盒子/被测设备 dcct 的「已连接设备」分区均为空）' };
+}
+
 
 /**
  * DCTS 前置：测试盒子连通预检 + 自动执行 dcct 配对流程（双端 uitest 驱动）。
@@ -575,7 +944,9 @@ async function doRun(args) {
     // —— 参数与路径校验 ——
     if (!args.testcases) throw new TestFlowError('没有提供测试用例路径（--testcases），已停止执行。');
     if (!args.workbook) throw new TestFlowError('没有提供设备目录（--workbook），报告不知道归档到哪里，已停止执行。');
-    const testcaseRoot = path.resolve(String(args.testcases));
+    const resolvedTestcases = await resolveSuiteRoot(String(args.testcases));
+    const testcaseRoot = resolvedTestcases.root;
+    if (resolvedTestcases.note) warnings.push(resolvedTestcases.note);
     const workbookRoot = path.resolve(String(args.workbook));
     const sns = parseSnsInput(args.sns);
     if (sns.length === 0) throw new TestFlowError('没有提供被测设备 SN（--sns），已停止执行。');
@@ -586,7 +957,7 @@ async function doRun(args) {
     const hdc = String(process.env.OH_XTS_HDC || 'hdc');
     // 测试盒子 SN：宿主总是显式传（可能为空=未配置），脚本内缺省仅用于裸命令行冒烟。
     const testBoxSn = 'box-sn' in args ? String(args['box-sn'] ?? '').trim() : DEFAULT_TEST_BOX_SN;
-    const boxWaitMs = Math.max(30000, Math.floor(Number(args['box-wait-ms']) || 5 * 60 * 1000));
+    const boxWaitMs = Math.max(30000, Math.floor(Number(args['box-wait-ms']) || 10 * 60 * 1000));
 
     // —— 设备在线校验与有屏/无屏探测 ——
     const targets = await hdcCommand(hdc, ['list', 'targets']);
@@ -635,6 +1006,29 @@ async function doRun(args) {
         delete step.minFile;
       }
     }
+    // —— 增量模式：从各套件最新归档报告里提取「未通过」（失败 + 没跑完）模块 ——
+    const onlyFailed = args['only-failed'] === true || args['only-failed'] === 'true';
+    const failedInfoBySuite = new Map();
+    if (onlyFailed) {
+      for (const archiveSuite of new Set(plan.map((step) => (step.suite === 'hats-hdf' ? 'hats' : step.suite)))) {
+        const archiveRoot = path.join(workbookRoot, 'report', suiteArchiveName(archiveSuite));
+        const names = (await fs.readdir(archiveRoot).catch(() => []))
+          .filter((name) => /^report-\d+$/.test(name))
+          .sort((a, b) => Number(a.slice(7)) - Number(b.slice(7)));
+        if (names.length === 0) continue; // 没有历史报告 → 该套件跑全量
+        // 跨轮聚合：已通过 = 所有轮 result（tests>0）的并集——补测轮只含失败子集，
+        // 只看最新轮会把历史轮通过的模块误判成"没跑完"。
+        const passedUnion = new Set();
+        for (const name of names) {
+          for (const module of await finishedAndPassedModules(path.join(archiveRoot, name))) passedUnion.add(module);
+        }
+        const latest = path.join(archiveRoot, names[names.length - 1]);
+        const summaryText = await fs.readFile(path.join(latest, 'summary_report.xml'), 'utf8').catch(() => '');
+        const summary = summaryText ? parseSummaryReport(summaryText) : undefined;
+        const failed = new Set((summary?.failedModules ?? []).map((module) => module.toLowerCase()));
+        failedInfoBySuite.set(archiveSuite, { failed, passed: passedUnion, latest });
+      }
+    }
     const minSetParent = path.dirname(testcaseRoot);
     const minSetEntries = await fs.readdir(minSetParent).catch(() => []);
     const minSetDirName = resolveMinSetDirName(minSetEntries, screen);
@@ -650,24 +1044,60 @@ async function doRun(args) {
       if (!await isFile(config)) throw new TestFlowError(`缺少套件配置文件：${config}`);
     }
     const minSetDir = minSetDirName ? path.join(minSetParent, minSetDirName) : '';
+    // —— xdevice 自检（对应 run.bat 的第 1/3 步）——
+    // 应用平时直接 `python -m xdevice`（跳过 run.bat 每次的 pip 重装），一旦 Python 升级、
+    // setuptools 被删、离线包没装上，就只剩「跑不起来」；这里先自检，失败时按 run.bat 的方式修一次。
+    if (!args['dry-run']) {
+      await ensureXdeviceReady({
+        python,
+        testcaseRoot,
+        onDetail: (detail) => emitProgress({ percent: 1, stage: '环境自检', detail }),
+      });
+    }
+
     const listsDirectory = path.join(artifacts, 'lists');
     const reportsDirectory = path.join(artifacts, 'reports');
     await fs.mkdir(listsDirectory, { recursive: true });
     await fs.mkdir(reportsDirectory, { recursive: true });
 
     for (const step of plan) {
-      if (step.mode !== 'list' || overrideModules.length > 0) continue;
-      const file = path.join(minSetDir, step.minFile);
-      if (!await isFile(file)) throw new TestFlowError(`缺少最小测试集清单：${file}`);
-      let modules = parseRunListLine(await fs.readFile(file, 'utf8'));
-      if (modules.length === 0) throw new TestFlowError(`最小测试集清单为空：${file}`);
+      let modules;
+      if (overrideModules.length > 0) {
+        // --modules 覆盖清单：同样要过 HATS 主轮/增量拆分（否则两步跑同一份清单，
+        // 归档出内容重复的 report）。
+        step.mode = 'list';
+        delete step.minFile;
+        modules = [...overrideModules];
+      } else {
+        if (step.mode !== 'list') continue;
+        const file = path.join(minSetDir, step.minFile);
+        if (!await isFile(file)) throw new TestFlowError(`缺少最小测试集清单：${file}`);
+        modules = parseRunListLine(await fs.readFile(file, 'utf8'));
+        if (modules.length === 0) throw new TestFlowError(`最小测试集清单为空：${file}`);
+        // 增量模式：只跑最新报告里未通过的模块（失败 + 没跑完）；全部通过则跳过该步。
+        if (onlyFailed) {
+          const info = failedInfoBySuite.get(step.suite === 'hats-hdf' ? 'hats' : step.suite);
+          if (info) {
+            const notPassed = [];
+            for (const module of modules) {
+              const key = module.toLowerCase();
+              if (!info.failed.has(key) && info.passed.has(key)) continue;
+              if (!notPassed.includes(module)) notPassed.push(module);
+            }
+            if (notPassed.length === 0) { step.modules = []; step.skipReason = `最新报告（${path.basename(info.latest)}）全部通过，无需重跑`; continue; }
+            modules = notPassed;
+          }
+        }
+      }
       // HATS 主轮剔除 HDF 模块；HATS-HDF 增量轮只跑 HDF 模块。
       if (step.suite === 'hats' && screen === 'yes') {
         if (step.hdfOnly) {
           modules = filterHdfModules(modules);
-          if (modules.length === 0) { step.skipReason = '无 HDF 模块'; continue; }
+          if (modules.length === 0) { step.modules = []; step.skipReason = '清单里没有 HDF 模块'; continue; }
         } else {
           modules = excludeHdfModules(modules);
+          // 清单全是 HDF 模块时主轮为空——跳过主轮，只跑增量（用于单独补跑 HDF）。
+          if (modules.length === 0) { step.modules = []; step.skipReason = '清单里没有非 HDF 的 HATS 模块，主轮跳过'; continue; }
         }
       }
       step.modules = modules;
@@ -693,14 +1123,14 @@ async function doRun(args) {
 
     if (args['dry-run']) {
       const commands = plan.map((step) => {
-        const reportRoot = path.join(reportsDirectory, `${step.suite}-r1`);
+        const reportRoot = path.join(reportsDirectory, `${stepReportTag(step)}-r1`);
         return {
           suite: step.suite,
           command: [python, '-m', 'xdevice', 'run',
             ...(step.mode === 'task'
               ? [step.suite]
-              : ['-tf', path.join(listsDirectory, `${step.suite}-r1.txt`)]),
-            '-c', path.join(testcaseRoot, step.suite, 'config', 'user_config.dsh-auto.xml'),
+              : ['-tf', path.join(listsDirectory, `${stepReportTag(step)}-r1.txt`)]),
+            '-c', path.join(testcaseRoot, step.suite === 'hats-hdf' ? 'hats' : step.suite, 'config', 'user_config.dsh-auto.xml'),
             '-sn', joinSns(stepSns(step)),
             '-rp', reportRoot].join(' '),
         };
@@ -725,18 +1155,40 @@ async function doRun(args) {
     // —— 串行执行各套件（套件内多设备并行，失败自动增量补测） ——
     let stopped = false;
     let currentChild = null;
-    const onStopSignal = () => {
+    const stopFile = path.join(artifacts, 'STOP');
+    const requestStop = async () => {
       stopped = true;
       if (currentChild?.pid) killTree(currentChild.pid);
-      emitResult({ ok: false, message: '收到停止指令，测试已终止；已归档的轮次保留。', rounds, unpassed });
-      process.exit(1);
+      if (currentChild?.pid) await new Promise((resolve) => currentChild.once('close', resolve));
+    };
+    const onStopSignal = () => {
+      // Windows 上宿主可能 taskkill /F 硬杀（SIGTERM 不会触发），所以配合 STOP 标记文件双通道；
+      // 这里只标记 + 杀当前子进程，收尾（合成 summary、归档、emitResult）交给主流程正常走完。
+      stopped = true;
+      if (currentChild?.pid) killTree(currentChild.pid);
     };
     process.on('SIGTERM', onStopSignal);
     process.on('SIGINT', onStopSignal);
 
     for (let stepIndex = 0; stepIndex < plan.length; stepIndex += 1) {
-      if (stopped) return 1;
+      if (stopped) break;
       const step = plan[stepIndex];
+      if (step.skipReason) {
+        const message = `${step.hdfLabel || suiteArchiveName(step.suite)} 已跳过：${step.skipReason}`;
+        emitRound({
+          suite: step.suite,
+          suiteIndex: stepIndex + 1,
+          suiteTotal: plan.length,
+          round: 1,
+          ok: false,
+          skipped: true,
+          failedModules: [],
+          message,
+        });
+        rounds.push({ suite: step.suite, round: 1, ok: false, skipped: true, failedModules: [], message });
+        skippedSuites.push({ suite: step.suite, reason: step.skipReason });
+        continue;
+      }
       const suiteDir = path.join(testcaseRoot, step.suite === 'hats-hdf' ? 'hats' : step.suite);
       let round = 1;
       // 补测轮固定走 -tf 清单（含 ssts：`run -l <失败模块>` 与 `run -tf` 等价）。
@@ -753,7 +1205,7 @@ async function doRun(args) {
       const suiteSns = stepSns(step);
 
       while (true) {
-        if (stopped) return 1;
+        if (stopped || (!stopped && await isFile(stopFile))) { stopped = true; break; }
 
         // DCTS 前置第一关（跑资源 bat 之前快速失败，不白重启设备）：盒子 SN 防呆 + 盒子在线。
         if (step.suite === 'dcts' && round === 1 && !boxStaticOk) {
@@ -781,11 +1233,11 @@ async function doRun(args) {
           });
         }
 
-        const reportRoot = path.join(reportsDirectory, `${step.suite}-r${round}`);
+        const reportRoot = path.join(reportsDirectory, `${stepReportTag(step)}-r${round}`);
         await fs.mkdir(reportRoot, { recursive: true });
         let listFile;
         if (useList) {
-          listFile = path.join(listsDirectory, `${step.suite}-r${round}.txt`);
+          listFile = path.join(listsDirectory, `${stepReportTag(step)}-r${round}.txt`);
           await fs.writeFile(listFile, `${pendingModules.join('\n')}\n`, 'utf8');
         }
 
@@ -859,27 +1311,23 @@ async function doRun(args) {
                 const installResult = await hdcCommand(hdc, ['-t', suiteSns[0], 'install', dcctHap], 30000).catch(() => undefined);
                 emitTestProgress(installResult && installResult.code === 0 ? 'dcct.hap 安装成功' : `dcct.hap 安装结果不明（继续）`, true);
               }
-              emitTestProgress(`重启 softbus 服务（dsoftbusTest / socketdsoftbusTest）…`, true);
-              await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'nohup', '/data/local/tmp/dsoftbusTest', '>', '/dev/null', '2>&1', '&'], 10000).catch(() => {});
-              await sleep(2000);
-              await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'nohup', '/data/local/tmp/socketdsoftbusTest', '>', '/dev/null', '2>&1', '&'], 10000).catch(() => {});
-              await sleep(2000);
-              // 拉起 DUT 上的 dcct（让 DUT 可被发现）
-              const dutHasDcct = await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'bm', 'dump', '-a'], 10000).catch(() => undefined);
-              if (dutHasDcct && dutHasDcct.code === 0 && dutHasDcct.stdout.includes(DCCT_BUNDLE_NAME)) {
-                await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 10000).catch(() => {});
-                emitTestProgress('DUT dcct 已拉起', true);
-              }
-              emitTestProgress(`softbus 服务已重启，DUT dcct 已就绪`, true);
+              // 清掉 DUT 侧 dcct 的历史信任数据再拉起：只删盒子侧连接会留下单向信任
+              // （DUT 记得盒子但盒子不记得 DUT），此时盒子再发起连接 DUT 既不弹信任窗也不自动接上。
+              await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'bm', 'clean', '-n', DCCT_BUNDLE_NAME, '-d'], 10000).catch(() => {});
+              await hdcCommand(hdc, ['-t', suiteSns[0], 'shell', 'aa', 'start', '-b', DCCT_BUNDLE_NAME, '-a', DCCT_ABILITY_NAME], 10000).catch(() => {});
+              emitTestProgress('DUT dcct 已重置并拉起', true);
+              // bm clean 连授权一起清了——dcct 首次启动会连弹三道系统授权（多设备协同/定位/文件），
+              // 在资源阶段就地放行，不留弹窗挡住后续的配置页推进与配对。
+              await sleep(2500);
+              await dismissDcctPermissionDialog(hdc, suiteSns[0], (detail) => emitTestProgress(detail, true));
+              emitTestProgress('dcct 授权弹窗已放行', true);
               await sleep(3000);
             }
             emitTestProgress(`设备 ${suiteSns[0]} 已回线，开始 ${suiteArchiveName(step.suite)} 测试。`, true);
           }
         }
 
-        // DCTS 前置：连通预检（在线/同网段/ping）通过即跑 DCTS。
-        // dcct 配对由 softbus 框架自行处理——设备如已互信（历史配对），DCTS 直接可用。
-        // 首次配对的设备 dcct 会弹 PIN/信任框，应用尝试自动完成；失败不阻塞测试。
+        // DCTS 前置：连通预检 → 重连/自动配对 → 连接确认；确认不了连接就跳过 DCTS（配对是 DCTS 的前提）。
         if (step.suite === 'dcts' && round === 1 && !boxPrecheckDone) {
           boxPrecheckDone = true;
           emitTestProgress('DCTS 前置：连通预检（在线 / 同网段 / ping）…', true);
@@ -897,9 +1345,52 @@ async function doRun(args) {
             break;
           }
           emitTestProgress(`DCTS 前置通过：${precheck.reason}`, true);
+
+          const dutIdentifiers = [];
+          for (const param of ['const.product.name', 'const.product.model', 'const.product.brand']) {
+            const value = await deviceParam(hdc, suiteSns[0], param).catch(() => '');
+            if (value && value.length >= 2 && !dutIdentifiers.includes(value)) dutIdentifiers.push(value);
+          }
+
+          // —— 配网：盒子 dcct 推进 + 自动配对（被测设备不启动 dcct）。
+          // 用户要求「点开始测试就要完成连接」：配对失败自动整体重试（时限内最多 2 次）。
+          emitTestProgress('执行 dcct 自动配对（盒子侧配置 → 发现 → 信任 → 连接码 → 连接确认）…', true);
+          const pairingDeadline = Date.now() + boxWaitMs;
+          let pairing = { connected: false, reason: '' };
+          for (let pairingAttempt = 1; pairingAttempt <= 2; pairingAttempt += 1) {
+            const left = pairingDeadline - Date.now();
+            if (left <= 30000) break;
+            if (pairingAttempt > 1) emitTestProgress(`第 ${pairingAttempt} 次尝试自动配对…`, true);
+            pairing = await performDcctPairing({
+              hdc,
+              boxSn: testBoxSn,
+              dutSn: suiteSns[0],
+              dutIdentifiers,
+              workspace: artifacts,
+              deadlineMs: left,
+              onDetail: (detail) => emitTestProgress(detail, true),
+            });
+            if (pairing.connected) break;
+          }
+          const confirmed = pairing.connected
+            ? { connected: true, reason: pairing.reason }
+            : { connected: false, reason: pairing.reason };
+
+          // —— 连接确认失败 → 跳过 DCTS ——
+          if (!confirmed.connected) {
+            skipReason = `${confirmed.reason}；DCTS 测试的前提是盒子与被测设备完成 dcct 配对连接，可在盒子上人工完成配对后单独重跑 DCTS`;
+            break;
+          }
+          emitTestProgress(`DCTS 配网完成：${confirmed.reason}`, true);
         }
 
+        // 每轮把「实际命令 + 退出码 + stderr 尾巴」落到 <artifacts>/run.log：
+        // 套件跑不起来时，用户手里就有可核对的一行，而不是只有一个「失败」。
+        const runLogPath = path.join(artifacts, 'run.log');
+        const appendRunLog = (line) => { fs.appendFile(runLogPath, `${new Date().toISOString()} ${line}\n`).catch(() => {}); };
+        appendRunLog(`START ${step.suite} r${round}: ${python} ${commandArgs.join(' ')} (cwd=${suiteDir})`);
         emitTestProgress(`${describeRound()} 启动 · 命令 ${python} ${commandArgs.join(' ')}`);
+        let stderrTail = '';
         const child = spawn(python, commandArgs, {
           cwd: suiteDir,
           windowsHide: true,
@@ -927,7 +1418,11 @@ async function doRun(args) {
           for (const line of lines) handleLine(line);
           emitTestProgress();
         });
-        child.stderr?.on('data', () => { lastActivity = Date.now(); });
+        child.stderr?.on('data', (chunk) => {
+          lastActivity = Date.now();
+          stderrTail = (stderrTail + chunk.toString()).slice(-4000);
+        });
+        child.once('close', (code) => appendRunLog(`EXIT ${step.suite} r${round}: code=${code} stderr=${stderrTail.replace(/\s+/g, ' ').slice(-500)}`));
 
         // 轮询 result/*.xml 计数推进度；看门狗：长时间无新结果且无进度行 → 判挂死。
         let reportDirectory = '';
@@ -942,6 +1437,8 @@ async function doRun(args) {
             new Promise((resolve) => setTimeout(() => resolve(false), RESULT_POLL_MS)),
           ]);
           if (exited || stopped) break;
+          // 停止标记文件（Windows 宿主 taskkill /F 不触发 SIGTERM 的优雅停止通道）。
+          if (await isFile(stopFile)) { await requestStop(); break; }
           if (!reportDirectory) reportDirectory = await resolveReportDirectory(reportRoot);
           const finished = (await finishedModuleNames(reportDirectory)).length;
           if (finished > finishedCount) {
@@ -961,23 +1458,47 @@ async function doRun(args) {
 
         // —— 判卷：summary_report.xml 为主，task_info.record 兜底 ——
         reportDirectory = reportDirectory || await resolveReportDirectory(reportRoot);
-        const summaryPath = reportDirectory ? path.join(reportDirectory, 'summary_report.xml') : '';
-        const summaryText = summaryPath ? await fs.readFile(summaryPath, 'utf8').catch(() => '') : '';
+        let summaryPath = reportDirectory ? path.join(reportDirectory, 'summary_report.xml') : '';
+        let summaryText = summaryPath ? await fs.readFile(summaryPath, 'utf8').catch(() => '') : '';
+        // 停止或看门狗终止的轮次没有完整报告——用已完成模块的 result XML 合成全套产物（xml/html/static/ini/record）。
+        // 看门狗轮次也必须合成：否则判卷走「缺少 summary」分支，未跑完的模块不会进补测（测试就断在半截）。
+        if ((stopped || watchdogFired) && reportDirectory && !summaryText) {
+          try {
+            await writeSynthesizedReportFiles(reportDirectory, {
+              suite: step.suite,
+              command: describeRound(),
+              sessionId: `${step.suite}-r${round}`,
+              workbookRoot,
+              logPath: reportDirectory,
+            });
+            summaryPath = path.join(reportDirectory, 'summary_report.xml');
+            summaryText = await fs.readFile(summaryPath, 'utf8').catch(() => '');
+          } catch (error) {
+            warnings.push(`停止归档补全失败（不影响已有产物）：${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
         const taskInfoPath = reportDirectory ? path.join(reportDirectory, 'task_info.record') : '';
         const taskInfoText = taskInfoPath ? await fs.readFile(taskInfoPath, 'utf8').catch(() => '') : '';
         const summary = summaryText ? parseSummaryReport(summaryText) : undefined;
         // 判卷以 summary 为准（failures>0 或整模块 ignored 都算失败）；
         // task_info.unsuccessful_params 会把"有 ignored 用例的通过模块"也列进来，只在
         // summary 完全缺失时兜底，避免把通过模块误送进补测。
-        const failedModules = summary
+        let failedModules = summary
           ? [...summary.failedModules]
           : (parseTaskInfoRecordText(taskInfoText) || []);
         // 跑了一半就挂（runmodules < 总数、又没记失败）→ 没跑完的模块全部进补测。
-        if (!watchdogFired && summary && !summary.ok && failedModules.length === 0
+        if (summary && !summary.ok && failedModules.length === 0
           && Number.isFinite(summary.total) && Number.isFinite(summary.runModules)
           && summary.runModules < summary.total && useList) {
           const finishedNames = new Set(await finishedModuleNames(reportDirectory));
           failedModules = pendingModules.filter((module) => !finishedNames.has(module.toLowerCase()));
+        }
+        // 看门狗终止的轮次：失败模块 ∪ 没跑完的模块，一起进补测（测试从断点继续）。
+        if (watchdogFired && useList) {
+          const finishedNames = new Set(await finishedModuleNames(reportDirectory));
+          for (const module of pendingModules) {
+            if (!finishedNames.has(module.toLowerCase()) && !failedModules.includes(module)) failedModules.push(module);
+          }
         }
         const roundOk = Boolean(summary?.ok) && failedModules.length === 0 && !watchdogFired;
         if (roundOk) suiteDone = Math.max(suiteDone, suiteTotal || suiteDone);
@@ -998,11 +1519,14 @@ async function doRun(args) {
           }
         }
 
-        const roundMessage = watchdogFired
+        const roundMessage = stopped
+          ? `${suiteArchiveName(step.suite)} 第 ${round} 轮被停止，已完成 ${finishedCount} 模块${archivedTo ? `，已归档 ${archivedTo}` : ''}。`
+          : watchdogFired
           ? `${suiteArchiveName(step.suite)} 第 ${round} 轮长时间无输出，已终止本轮。`
           : roundOk
             ? `${suiteArchiveName(step.suite)} 第 ${round} 轮全部通过${archivedTo ? `，已归档 ${archivedTo}` : ''}。`
-            : `${suiteArchiveName(step.suite)} 第 ${round} 轮有 ${failedModules.length} 个失败模块${archivedTo ? `，已归档 ${archivedTo}` : ''}。`;
+            : `${suiteArchiveName(step.suite)} 第 ${round} 轮有 ${failedModules.length} 个失败模块${archivedTo ? `，已归档 ${archivedTo}` : ''}`
+              + (!summary && stderrTail.trim() ? `；xdevice 输出：${stderrTail.replace(/\s+/g, ' ').trim().slice(-300)}` : '') + '。';
         emitRound({
           suite: step.suite,
           suiteIndex: stepIndex + 1,
@@ -1010,6 +1534,8 @@ async function doRun(args) {
           round,
           ok: roundOk,
           failedModules,
+          stopped,
+          unavailable: summary?.unavailable,
           archivedTo: archivedTo || undefined,
           message: roundMessage,
         });
@@ -1018,9 +1544,11 @@ async function doRun(args) {
           round,
           ok: roundOk,
           failedModules,
+          stopped,
           archivedTo: archivedTo || undefined,
         });
 
+        if (stopped) break;
         if (roundOk) break;
         if (failedModules.length === 0) {
           // 判定失败却拿不到失败清单（报告缺失/无法解析）→ 不能盲目重跑整包，交给人工。
@@ -1055,17 +1583,20 @@ async function doRun(args) {
       }
     }
 
-    const ok = unpassed.length === 0 && skippedSuites.length === 0;
+    const ok = !stopped && unpassed.length === 0 && skippedSuites.length === 0;
     const skippedText = skippedSuites.length > 0
       ? `已跳过 ${skippedSuites.length} 个套件（${skippedSuites.map((item) => suiteArchiveName(item.suite))}：${skippedSuites.map((item) => item.reason).join('；')}）。`
       : '';
-    const message = ok
+    const message = stopped
+      ? `XTS 测试已停止：已完成 ${rounds.length} 轮，当前套件已完成模块的报告已归档到 ${path.join(workbookRoot, 'report')}；重新开始测试或用「增量模式」补跑未通过模块即可。${skippedText}`
+      : ok
       ? `XTS 自动测试完成：${describePlan()}，${rounds.length} 轮全部通过，报告已归档到 ${path.join(workbookRoot, 'report')}。`
       : skippedSuites.length > 0 && unpassed.length === 0
         ? `XTS 自动测试结束：${skippedText}其余套件${rounds.some((round) => !round.skipped && round.ok) ? '已通过' : '结果见 rounds'}。可单独重跑被跳过的套件（如 --suites dcts）。`
         : `XTS 自动测试结束，还有 ${unpassed.length} 个失败模块（${unpassed.map((item) => `${suiteArchiveName(item.suite)} ${item.module}`).join('、')}），已达补测上限，请人工排查或走豁免。${skippedText}`;
     emitResult({
       ok,
+      stopped,
       message: warnings.length > 0 ? `${message} ${warnings.join(' ')}` : message,
       plan: plan.map((step) => ({ suite: step.suite, mode: step.mode, modules: step.mode === 'task' ? 0 : step.modules.length })),
       screens,

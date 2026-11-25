@@ -99,6 +99,8 @@ function tagAttributes(tagText) {
  * - 每个 `<testsuite … failures="1" modulename="ActsXxx">` 的 modulename 是失败模块；
  * - **整模块用例全部 ignored（ignored ≥ tests > 0）= 没真正跑到**，也计入失败模块
  *   （实测 dcts 环境没就绪时整模块 ignored、failures 仍是 0，不能当"通过"）；
+ * - **unavailable（模块没跑起来，tests=0）也算失败**，模块名计入 failedModules 进补测
+ *   （实测 ssts 的 OpenHarmony-SA-Patch-label-test 在部分设备上 unavailable，必须重测）；
  * - 正常的少量 ignored 用例不影响通过。
  */
 export function parseSummaryReport(xml) {
@@ -116,7 +118,8 @@ export function parseSummaryReport(xml) {
     if (!moduleName) continue;
     const hasFailures = Number.isFinite(failures) && failures > 0;
     const allIgnored = Number.isFinite(tests) && tests > 0 && Number.isFinite(ignored) && ignored >= tests;
-    if (!hasFailures && !allIgnored) continue;
+    const noTests = Number.isFinite(tests) && tests === 0;
+    if (!hasFailures && !allIgnored && !noTests) continue;
     if (!failedModules.includes(moduleName)) failedModules.push(moduleName);
   }
   const total = Number(root.modules);
@@ -221,7 +224,7 @@ export function suitePlan(screen) {
     { suite: 'hats', mode: 'list', minFile: 'hats-min.txt' },
   ];
   if (screen === 'yes') {
-    plan.push({ suite: 'hats', mode: 'list', hdfOnly: true, singleDevice: true, hdfLabel: 'HATS-HDF' });
+    plan.push({ suite: 'hats', mode: 'list', minFile: 'hats-min.txt', hdfOnly: true, singleDevice: true, hdfLabel: 'HATS-HDF' });
     plan.push({ suite: 'dcts', mode: 'list', minFile: 'dcts-min.txt', singleDevice: true });
   }
   plan.push({ suite: 'acts', mode: 'list', minFile: 'acts-min.txt' });
@@ -238,6 +241,15 @@ export function excludeHdfModules(modules) {
 export function filterHdfModules(modules) {
   const hdfSet = new Set(HDF_MODULES.map((m) => m.toLowerCase()));
   return modules.filter((m) => hdfSet.has(m.toLowerCase()));
+}
+
+/**
+ * 单个 plan step 的报告根目录标签：主轮与 HATS-HDF 增量轮同为 suite=hats，
+ * 必须用不同标签（hats-rN vs hats-hdf-rN），否则增量轮会复用主轮的 xdevice
+ * 报告目录、判卷读到旧报告「假通过」（2026-11-23 实测 175+3 只归档了 175 的根因）。
+ */
+export function stepReportTag(step) {
+  return `${step.suite}${step.hdfOnly ? '-hdf' : ''}`;
 }
 
 /** 套件目录名 → 归档目录名（report/SSTS/report-1 的对应路径，沿用现有大写约定）。 */
@@ -298,4 +310,201 @@ export function parseUiLayoutForIdentifiers(jsonText, identifiers) {
     .filter((item) => item.length >= 2);
   if (list.length === 0) return false;
   return list.some((item) => text.includes(item));
+}
+
+/**
+ * 把若干 per-module result XML（根节点 `<testsuites name="<模块>">`）聚合成一份
+ * summary_report.xml 文本。中断轮次没有 summary——用已完成模块的 result XML 合成。
+ * 聚合口径：errors/disabled/failures/tests/ignored/unavailable 求和；
+ * modules = 收到的模块 XML 数，runmodules = 其中 tests>0 的模块数。
+ */
+export function synthesizeSummaryReport(moduleXmls) {
+  const list = (Array.isArray(moduleXmls) ? moduleXmls : []).map((item) => String(item ?? ''));
+  const inners = [];
+  const sums = { errors: 0, disabled: 0, failures: 0, tests: 0, ignored: 0, unavailable: 0 };
+  let runModules = 0;
+  for (const text of list) {
+    const rootMatch = text.match(/<testsuites\b[^>]*>/);
+    if (!rootMatch) continue;
+    const closeIndex = text.lastIndexOf('</testsuites>');
+    const inner = text.slice(rootMatch.index + rootMatch[0].length, closeIndex >= 0 ? closeIndex : undefined).trim();
+    if (!inner) continue;
+    const root = tagAttributes(rootMatch[0]);
+    for (const key of Object.keys(sums)) {
+      const value = Number(root[key]);
+      if (Number.isFinite(value)) sums[key] += value;
+    }
+    if (Number(root.tests) > 0) runModules += 1;
+    inners.push(inner);
+  }
+  const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const attrs = Object.entries(sums).map(([key, value]) => `${key}="${value}"`).join(' ');
+  return [
+    `<?xml version='1.0' encoding='UTF-8'?>`,
+    `<testsuites name="summary_report" starttime="${stamp}" endtime="${stamp}" ${attrs} modules="${inners.length}" runmodules="${runModules}">`,
+    ...inners,
+    `</testsuites>`,
+  ].join('\n');
+}
+
+function decodeXmlEntities(text) {
+  return String(text ?? '')
+    .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function xmlStampToMs(stamp) {
+  const value = Date.parse(String(stamp ?? '').replace(' ', 'T'));
+  return Number.isFinite(value) ? value : NaN;
+}
+
+/**
+ * 从 per-module result XML（根节点 `<testsuites name="<模块>" … devices="CDATA[...]">`）
+ * 合成 xdevice summary_report.html 所需的 `window.reportData` 对象。
+ * 字段映射与真实 data.js 对齐：模块条目 / suites / cases / devices / summary 聚合。
+ * summary.unavailable = 没跑到用例的模块数（tests=0），runmodules = 跑到用例的模块数。
+ */
+export function buildReportData(moduleXmls, options = {}) {
+  const list = (Array.isArray(moduleXmls) ? moduleXmls : []).map((item) => String(item ?? ''));
+  const modules = [];
+  const totals = { tests: 0, passed: 0, failed: 0, blocked: 0, ignored: 0 };
+  let unavailableModules = 0;
+  let runModules = 0;
+  let devices = [];
+  let startMs = NaN;
+  let endMs = NaN;
+  const suitePattern = /<testsuite\b([^>]*?)(\/>|>([\s\S]*?)<\/testsuite>)/g;
+  const casePattern = /<testcase\b([^>]*?)(\/>|>[\s\S]*?<\/testcase>)/g;
+  for (const text of list) {
+    const rootMatch = text.match(/<testsuites\b([^>]*)>/);
+    if (!rootMatch) continue;
+    const root = tagAttributes(rootMatch[1]);
+    const name = String(root.name ?? '').trim();
+    if (!name) continue;
+    const tests = Number(root.tests) || 0;
+    const failed = Number(root.failures) || 0;
+    const blocked = Number(root.errors) || 0;
+    const ignored = Number(root.ignored) || 0;
+    const unavailable = Number(root.unavailable) || 0;
+    const passed = Math.max(0, tests - failed - blocked - ignored);
+    const start = xmlStampToMs(root.starttime);
+    const end = xmlStampToMs(root.endtime);
+    if (Number.isFinite(start) && (!Number.isFinite(startMs) || start < startMs)) startMs = start;
+    if (Number.isFinite(end) && (!Number.isFinite(endMs) || end > endMs)) endMs = end;
+    let moduleDevices = [];
+    const cdata = decodeXmlEntities(root.devices).match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+    if (cdata) { try { moduleDevices = JSON.parse(cdata[1]); } catch { moduleDevices = []; } }
+    if (devices.length === 0 && moduleDevices.length > 0) devices = moduleDevices;
+    const suites = [];
+    for (const suiteMatch of text.matchAll(suitePattern)) {
+      const attrs = tagAttributes(suiteMatch[1]);
+      const body = suiteMatch[3] ?? '';
+      const cases = [];
+      for (const caseMatch of (body ?? '').matchAll(casePattern)) {
+        const tc = tagAttributes(caseMatch[1]);
+        const status = tc.result === 'true' ? 'Passed'
+          : tc.result === 'false' ? 'Failed'
+          : String(tc.status ?? '') === 'ignored' ? 'Ignored' : 'Blocked';
+        cases.push([tc.name ?? '', tc.classname ?? '', status, Number(tc.time) || 0, decodeXmlEntities(tc.message ?? ''), tc.report ?? '']);
+      }
+      const sTests = Number(attrs.tests) || 0;
+      const sFailed = Number(attrs.failures) || 0;
+      const sBlocked = Number(attrs.errors) || 0;
+      const sIgnored = Number(attrs.ignored) || 0;
+      const sPassed = Math.max(0, sTests - sFailed - sBlocked - sIgnored);
+      suites.push({
+        name: attrs.name ?? '',
+        report: attrs.report ?? '',
+        time: Number(attrs.time) || 0,
+        tests: sTests,
+        passed: sPassed,
+        failed: sFailed,
+        blocked: sBlocked,
+        ignored: sIgnored,
+        passingrate: sTests > 0 ? `${((sPassed / sTests) * 100).toFixed(1)}%` : '0.0%',
+        cases,
+      });
+    }
+    const seconds = Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, Math.round((end - start) / 1000)) : 0;
+    modules.push({
+      name,
+      report: '',
+      round: Number(root.round) || 1,
+      test_type: root.test_type ?? '',
+      test_start: root.starttime ?? '',
+      test_end: root.endtime ?? '',
+      time: Number(root.time) || 0,
+      execute_time: `${seconds}s`,
+      tests,
+      passed,
+      failed,
+      blocked,
+      ignored,
+      unavailable,
+      passingrate: tests > 0 ? `${((passed / tests) * 100).toFixed(1)}%` : '0.0%',
+      error: decodeXmlEntities(root.message ?? ''),
+      logs: {},
+      devices: moduleDevices,
+      suites,
+    });
+    totals.tests += tests;
+    totals.passed += passed;
+    totals.failed += failed;
+    totals.blocked += blocked;
+    totals.ignored += ignored;
+    if (tests > 0) runModules += 1;
+    else unavailableModules += 1;
+  }
+  const localStamp = (ms) => {
+    const date = new Date(ms);
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  };
+  const startTime = Number.isFinite(startMs) ? localStamp(startMs) : '';
+  const endTime = Number.isFinite(endMs) ? localStamp(endMs) : '';
+  const executeSeconds = Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, Math.round((endMs - startMs) / 1000)) : 0;
+  return {
+    exec_info: {
+      test_start: startTime,
+      test_end: endTime,
+      execute_time: `${executeSeconds}s`,
+      test_type: String(options.testType ?? ''),
+      host_info: String(options.hostInfo ?? ''),
+      logs: options.logs ?? {},
+    },
+    summary: {
+      modules: modules.length,
+      repeat: 1,
+      runmodules: runModules,
+      tests: totals.tests,
+      passed: totals.passed,
+      failed: totals.failed,
+      blocked: totals.blocked,
+      ignored: totals.ignored,
+      unavailable: unavailableModules,
+    },
+    devices,
+    modules,
+  };
+}
+
+/** summary.ini 文本（xdevice 同款字段）。 */
+export function buildSummaryIni({ testType, deviceName, hostInfo, startTime, endTime, executionTime, logPath }) {
+  return [
+    '[default]',
+    'Platform=OpenHarmony',
+    `Test Type=${testType}`,
+    `Device Name=${deviceName}`,
+    `Host Info=${hostInfo}`,
+    `Test Start/ End Time=${startTime}/ ${endTime}`,
+    `Execution Time=${executionTime}`,
+    'Device Type=Phone',
+    logPath ? `Log Path=${logPath}` : '',
+  ].filter(Boolean).join('\n') + '\n';
+}
+
+/** task_info.record 文本（JSON，字段与 xdevice 同款）。 */
+export function buildTaskInfoRecord({ command, sessionId, reportPath, dataReports, unsuccessfulParams = {} }) {
+  return `${JSON.stringify({ command, session_id: sessionId, report_path: reportPath, unsuccessful_params: unsuccessfulParams, data_reports: dataReports }, null, 2)}\n`;
 }
