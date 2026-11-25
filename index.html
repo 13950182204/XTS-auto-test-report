@@ -3,7 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <link rel="icon" href="data:," />
   <title>OpenHarmony XTS 报告上传</title>
+  <script>
+    // 键名与 src/theme.ts 的 KEY（'app.theme'）保持同步；首帧前设主题，避免闪白
+    (function () {
+      try {
+        var v = localStorage.getItem('app.theme');
+        var t = v === 'light' || v === 'dark' || v === 'system' ? v : 'dark';
+        if (t === 'system') t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.dataset.theme = t;
+      } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

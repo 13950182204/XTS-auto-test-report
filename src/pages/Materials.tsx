@@ -114,12 +114,13 @@ export function MaterialsPage(props: { state: RunState; test: TestState; reloadT
     if (action === 'phase2/draft/verify') {
       setVerifyNote(response.ok ? (response.message || '平台核验完成。') : '')
       if (!response.ok) setPageError(response.message || response.error || '平台核验失败。')
-      void loadDrafts()
     } else if (!response.ok) {
       setPageError(response.message || '操作失败。')
-    } else {
-      setPageError('')
-      void (startMessage ? undefined : undefined)
+    } else if (action === 'preflight' && derived?.mirrorPath) {
+      // 与插件同款链路：预检通过 → 自动上传固件（平台已有同名固件时脚本内部会跳过），
+      // 不传固件的话提交第 4 步会报 MIRROR_NOT_FOUND。
+      const upload = await request<{ ok: boolean; message?: string; error?: string }>('mirror/upload', 'POST', { mirrorPath: derived.mirrorPath, dryRun: false })
+      if (!upload.ok) setPageError(upload.error || upload.message || '固件自动上传失败，请到「镜像固件上传」页手动处理。')
     }
     void loadDrafts()
     void startMessage
@@ -155,107 +156,120 @@ export function MaterialsPage(props: { state: RunState; test: TestState; reloadT
 
   return (
     <>
-      <div className="page-head">
+      <div className="page-head--bar">
         <h1>评测资料</h1>
-        <p>填设备目录 → 预检 → 提交（五步保存到「未提交」）；草稿支持解除关联与平台核验。</p>
-      </div>
-
-      <Panel title="申请账号与设备目录" meta={hasPassword ? '已保存密码' : '未保存密码'}>
-        <div className="grid">
-          <Field id="m-username" label="账号" value={values.username} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, username: value }))} />
-          <Field id="m-password" label="密码" type="password" value={values.password} placeholder={hasPassword ? '已保存密码，留空则沿用' : '未保存密码'} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, password: value }))} />
-          <Field id="m-workbook" label="设备目录（或批量父目录）" wide value={values.workbookPath} placeholder="目录路径，例如 D:\ohos\XTS6.1\CDOHong\CDO-RK3568"
-            hint={deriveHint || '只填目录，自动识别工作簿并带出路径'}
-            disabled={busy} onChange={(value) => setValues((v) => ({ ...v, workbookPath: value }))} />
-          <Field id="m-phone" label="企业联系电话" value={values.contactPhone} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, contactPhone: value }))} />
-          <Field id="m-email" label="企业邮箱" value={values.contactEmail} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, contactEmail: value }))} />
-        </div>
-        <div className="actions">
-          <button className="btn" disabled={busy} onClick={() => void runAction('preflight', { workbookPath: values.workbookPath.trim() }, '')}>评测资料预检</button>
+        <span className="page-head__meta">预检通过自动上传固件 · 五步保存到「未提交」· 确认提交仍由你在平台点</span>
+        <span className="page-head__actions">
+          <button className="btn btn--small" disabled={busy} onClick={() => void runAction('preflight', { workbookPath: values.workbookPath.trim() }, '')}>评测资料预检</button>
           <button className="btn btn--primary" disabled={busy} onClick={() => void runAction('save', { workbookPath: values.workbookPath.trim() }, '')}>评测资料提交</button>
-          <button className="btn" disabled={busy || draftsLoading} onClick={() => { void loadDrafts() }}>{draftsLoading ? '检查中…' : '刷新草稿'}</button>
-          <button className="btn" disabled={busy || draftsLoading || draftItems.length === 0}
-            title="登录平台核对每条草稿的真实状态并回写工作簿"
-            onClick={() => void runAction('phase2/draft/verify', { workbookPath: values.workbookPath.trim() }, '')}>平台核验</button>
+        </span>
+      </div>
+      <div className="workbench">
+        <div className="workbench__main">
+          <Panel title="申请账号与设备目录" meta={hasPassword ? '已保存密码' : '未保存密码'}>
+            <div className="grid">
+              <Field id="m-username" label="账号" value={values.username} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, username: value }))} />
+              <Field id="m-password" label="密码" type="password" value={values.password} placeholder={hasPassword ? '已保存密码，留空则沿用' : '未保存密码'} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, password: value }))} />
+              <Field id="m-workbook" label="设备目录（或批量父目录）" wide pick="directory" value={values.workbookPath} placeholder="点右侧「选择文件夹」选设备目录"
+                hint={deriveHint || '选设备目录（或多台设备所在的父目录），自动识别工作簿并带出路径'}
+                disabled={busy} onChange={(value) => setValues((v) => ({ ...v, workbookPath: value }))} />
+              <Field id="m-phone" label="企业联系电话" value={values.contactPhone} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, contactPhone: value }))} />
+              <Field id="m-email" label="企业邮箱" value={values.contactEmail} disabled={busy} onChange={(value) => setValues((v) => ({ ...v, contactEmail: value }))} />
+            </div>
+          </Panel>
+
+          <Panel title="未提交草稿" meta={`${draftItems.filter((item) => item.resumable).length} 条可直接续提交`} actions={
+            <>
+              <button className="btn btn--small" disabled={busy || draftsLoading} onClick={() => { void loadDrafts() }}>{draftsLoading ? '检查中…' : '刷新草稿'}</button>
+              <button className="btn btn--small" disabled={busy || draftsLoading || draftItems.length === 0}
+                title="登录平台核对每条草稿的真实状态并回写工作簿"
+                onClick={() => void runAction('phase2/draft/verify', { workbookPath: values.workbookPath.trim() }, '')}>平台核验</button>
+            </>
+          } scroll scrollMax={280}>
+            {drafts?.ok === false
+              ? <StatusLine tone="error">{`草稿检查失败：${drafts.message || drafts.error || '未知原因'}`}</StatusLine>
+              : draftItems.length > 0 ? (
+                <ul className="list">
+                  {draftItems.map((item) => {
+                    const key = itemKey(item)
+                    const armed = unbindArmedId === key
+                    const busyItem = unbindBusyId === key
+                    return (
+                      <li className="row" key={`draft-${item.applicationId || item.workbookPath || item.name}`}>
+                        <div className="row-top">
+                          <Chip tone={item.assessmentNumber ? 'warn' : 'neutral'}>{item.assessmentNumber ? '未提交' : '编号待回写'}</Chip>
+                          <span className="name" title={item.name || '未命名申请'}>{item.name || '未命名申请'}</span>
+                          <span className="row-actions">
+                            {armed ? (
+                              <>
+                                <button className="btn btn--small btn--danger" disabled={busyItem} onClick={() => onUnbindDraft(item, 'confirm')}>{busyItem ? '解除中…' : '确认解除'}</button>
+                                <button className="btn btn--small" disabled={busyItem} onClick={() => onUnbindDraft(item, 'cancel')}>取消</button>
+                              </>
+                            ) : (
+                              <button className="btn btn--small" disabled={unbindBusyId !== ''} onClick={() => onUnbindDraft(item, 'arm')}>解除关联</button>
+                            )}
+                          </span>
+                        </div>
+                        <p className="path" title={`${item.assessmentNumber ? `测评编号：${item.assessmentNumber}` : '测评编号：待回写'}${item.processedAt ? ` · ${item.processedAt}` : ''}${item.notes ? ` · ${item.notes}` : ''}`}>
+                          {`${item.assessmentNumber ? `测评编号：${item.assessmentNumber}` : '测评编号：待回写'}${item.processedAt ? ` · ${item.processedAt}` : ''}${item.notes ? ` · ${item.notes}` : ''}`}
+                        </p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="empty">{draftsLoading ? '正在检查未提交草稿…' : '这个目录下没有创建过平台申请的草稿。'}</p>
+              )}
+            {unbindError ? <StatusLine tone="error">{unbindError}</StatusLine> : null}
+            {verifyNote ? <StatusLine tone="ok">{verifyNote}</StatusLine> : null}
+          </Panel>
+
+          {messages ? <StatusLine tone={state.ok === false || pageError ? 'error' : 'ok'}>{messages}</StatusLine> : null}
         </div>
-        {deriveHint ? <p className="hint">{deriveHint}</p> : null}
-      </Panel>
 
-      <Panel title="未提交草稿" meta={`${draftItems.filter((item) => item.resumable).length} 条可直接续提交`}>
-        {drafts?.ok === false
-          ? <StatusLine tone="error">{`草稿检查失败：${drafts.message || drafts.error || '未知原因'}`}</StatusLine>
-          : draftItems.length > 0 ? (
-            <ul className="list">
-              {draftItems.map((item) => {
-                const key = itemKey(item)
-                const armed = unbindArmedId === key
-                const busyItem = unbindBusyId === key
-                return (
-                  <li className="row" key={`draft-${item.applicationId || item.workbookPath || item.name}`}>
-                    <div className="row-top">
-                      <Chip tone={item.assessmentNumber ? 'warn' : 'neutral'}>{item.assessmentNumber ? '未提交' : '编号待回写'}</Chip>
-                      <span className="name">{item.name || '未命名申请'}</span>
-                      <span className="muted">{item.processingStatus || '待处理'}</span>
-                      <span className="row-actions">
-                        {armed ? (
-                          <>
-                            <button className="btn btn--small btn--danger" disabled={busyItem} onClick={() => onUnbindDraft(item, 'confirm')}>{busyItem ? '解除中…' : '确认解除'}</button>
-                            <button className="btn btn--small" disabled={busyItem} onClick={() => onUnbindDraft(item, 'cancel')}>取消</button>
-                          </>
-                        ) : (
-                          <button className="btn btn--small" disabled={unbindBusyId !== ''} onClick={() => onUnbindDraft(item, 'arm')}>解除关联</button>
-                        )}
-                      </span>
-                    </div>
-                    <p className="path">{`${item.assessmentNumber ? `测评编号：${item.assessmentNumber}` : '测评编号：待回写'}${item.processedAt ? ` · ${item.processedAt}` : ''}${item.notes ? ` · ${item.notes}` : ''}`}</p>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <p className="empty">{draftsLoading ? '正在检查未提交草稿…' : '这个目录下没有创建过平台申请的草稿。'}</p>
-          )}
-        {unbindError ? <StatusLine tone="error">{unbindError}</StatusLine> : null}
-        {verifyNote ? <StatusLine tone="ok">{verifyNote}</StatusLine> : null}
+        <div className="workbench__side">
+          <Panel title="本地任务进度" meta={stage || (state.phase !== 'idle' ? '进行中' : '空闲')}>
+            {percent !== undefined ? (
+              <>
+                <div className="progress-top">
+                  <span>{stage || '处理状态'}</span>
+                  <span className="muted">{Math.round(percent)}%</span>
+                </div>
+                <Bar percent={percent} danger={state.ok === false} label="评测资料任务进度" />
+                {detail ? <p className="path" title={detail}>{detail}</p> : null}
+              </>
+            ) : (
+              <p className="empty">{state.phase !== 'idle' ? '任务正在启动…' : '当前没有进行中的资料任务。预检 / 提交 / 核验的进度会显示在这里。'}</p>
+            )}
+          </Panel>
 
-      </Panel>
-
-      {percent !== undefined ? (
-        <Panel title="任务进度" meta={stage}>
-          <div className="progress-top">
-            <span>{stage || '处理状态'}</span>
-            <span className="muted">{Math.round(percent)}%</span>
-          </div>
-          <Bar percent={percent} danger={state.ok === false} label="评测资料任务进度" />
-          {detail ? <p className="path">{detail}</p> : null}
-        </Panel>
-      ) : null}
-
-      {batchItems.length > 0 ? (
-        <Panel title={`批次进度（${batchCompleted}/${batchTotal}）`} meta={str(batch?.rootPath)}>
-          <ul className="list">
-            {batchItems.map((item, index) => {
-              const percent = clampPercent(num(item.percent)) ?? 0
-              const tone = str(item.status)
-              const name = str(item.name) || str(item.directory) || `任务 ${index + 1}`
-              const category = str(item.testCategory)
-              return (
-                <li className={`row ${tone === 'blocked' || tone === 'retryable' ? 'row--blocked' : tone === 'saved' || tone === 'preflight' ? 'row--ready' : ''}`} key={`${str(item.workbookPath)}-${index}`}>
-                  <div className="row-top">
-                    {category ? <Chip tone={category === 'ACTS' ? 'acts' : ['HATS', 'DCTS', 'SSTS'].includes(category) ? 'warn' : 'neutral'}>{category}</Chip> : null}
-                    <span className="name">{name}</span>
-                    <span className="path">{Math.round(percent)}%</span>
-                  </div>
-                  <Bar percent={percent} danger={tone === 'blocked'} label={`${name} 进度`} />
-                  <p className="path">{[str(item.stage) || tone, str(item.detail)].filter(Boolean).join('：')}</p>
-                </li>
-              )
-            })}
-          </ul>
-        </Panel>
-      ) : null}
-
-      {messages ? <StatusLine tone={state.ok === false || pageError ? 'error' : 'ok'}>{messages}</StatusLine> : null}
+          <Panel title="批次进度" meta={batchItems.length > 0 ? `${batchCompleted}/${batchTotal}` : undefined} fill scroll>
+            {batchItems.length === 0 ? (
+              <p className="empty">批量任务的逐条进度会显示在这里（如批量父目录多份工作簿、豁免批次）。</p>
+            ) : (
+              <ul className="list">
+                {batchItems.map((item, index) => {
+                  const percent = clampPercent(num(item.percent)) ?? 0
+                  const tone = str(item.status)
+                  const name = str(item.name) || str(item.directory) || `任务 ${index + 1}`
+                  const category = str(item.testCategory)
+                  return (
+                    <li className={`row ${tone === 'blocked' || tone === 'retryable' ? 'row--blocked' : tone === 'saved' || tone === 'preflight' ? 'row--ready' : ''}`} key={`${str(item.workbookPath)}-${index}`}>
+                      <div className="row-top">
+                        {category ? <Chip tone={category === 'ACTS' ? 'acts' : ['HATS', 'DCTS', 'SSTS'].includes(category) ? 'warn' : 'neutral'}>{category}</Chip> : null}
+                        <span className="name" title={name}>{name}</span>
+                        <span className="pct push-right">{Math.round(percent)}%</span>
+                      </div>
+                      <Bar percent={percent} danger={tone === 'blocked'} label={`${name} 进度`} />
+                      <p className="path" title={[str(item.stage) || tone, str(item.detail)].filter(Boolean).join('：')}>{[str(item.stage) || tone, str(item.detail)].filter(Boolean).join('：')}</p>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </Panel>
+        </div>
+      </div>
     </>
   )
 }

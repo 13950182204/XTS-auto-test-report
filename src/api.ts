@@ -100,6 +100,8 @@ export type TestRound = {
   archivedTo?: string
   message?: string
   skipped?: boolean
+  stopped?: boolean
+  unavailable?: number
   suiteIndex?: number
   suiteTotal?: number
 }

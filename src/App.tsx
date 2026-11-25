@@ -124,7 +124,7 @@ export function App(): ReactElement {
             <span className="taskbar__meta">{str(asRecord(state.progress)?.detail) || str(asRecord(test.progress)?.detail) || ''}</span>
           </div>
         ) : null}
-        {body}
+        <div className="page-host">{body}</div>
       </main>
     </div>
   )

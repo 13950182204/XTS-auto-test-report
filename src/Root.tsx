@@ -26,7 +26,7 @@ class ErrorBoundary extends Component<{ children: ReactElement; onReset: () => v
   render(): ReactElement {
     if (this.state.error) {
       return (
-        <div className="content" style={{ gridTemplateColumns: '1fr' }}>
+        <div className="error-host">
           <div className="panel">
             <div className="panel-head"><span className="panel-title">渲染进程出错</span></div>
             <pre className="status status--error">{this.state.error}</pre>

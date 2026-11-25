@@ -1,5 +1,6 @@
 import http from 'node:http'
-import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { BrowserWindow, dialog } from 'electron'
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join, normalize, win32 } from 'node:path'
 import { derivePaths } from './derive-paths.js'
@@ -109,8 +110,9 @@ type TestState = {
   plan?: Array<{ suite: string; mode: string; modules?: number }>
   screens?: Record<string, string>
   progress?: TestProgressState
-  rounds?: Array<{ suite: string; round: number; ok: boolean; failedModules: string[]; archivedTo?: string; skipped?: boolean }>
+  rounds?: Array<{ suite: string; round: number; ok: boolean; failedModules: string[]; archivedTo?: string; skipped?: boolean; stopped?: boolean }>
   unpassed?: Array<{ suite: string; module: string }>
+  artifactsDir?: string
 }
 
 const testState: TestState = { phase: 'idle' }
@@ -866,6 +868,47 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
     }
   }
 
+  /**
+   * 路径选择一律走系统对话框（用户要求 2026-11-25：不再手填路径）。
+   * mode=directory 选文件夹；mode=file 选文件并可按扩展名过滤。
+   * 默认定位到当前值所在目录（值本身是文件时取它的父目录）。
+   */
+  async function handlePickPath(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: '只支持 POST。' })
+    try {
+      const body = await readBody(req)
+      const mode = text(body.mode) === 'file' ? 'file' : 'directory'
+      const title = text(body.title) || (mode === 'file' ? '选择文件' : '选择文件夹')
+      const current = text(body.defaultPath)
+      let defaultPath: string | undefined
+      if (current && existsSync(current)) {
+        try {
+          defaultPath = statSync(current).isDirectory() ? current : dirname(current)
+        } catch {
+          defaultPath = undefined
+        }
+      }
+      const extensions = Array.isArray(body.extensions)
+        ? body.extensions.map((item) => text(item).replace(/^\./, '')).filter(Boolean)
+        : []
+      const options: Electron.OpenDialogOptions = {
+        title,
+        properties: mode === 'file' ? ['openFile'] : ['openDirectory', 'createDirectory'],
+        filters: mode === 'file' && extensions.length > 0
+          ? [{ name: '支持的格式', extensions }, { name: '全部文件', extensions: ['*'] }]
+          : undefined,
+      }
+      if (defaultPath) options.defaultPath = defaultPath
+      const owner = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+      if (result.canceled || result.filePaths.length === 0) return sendJson(res, 200, { ok: true, canceled: true })
+      sendJson(res, 200, { ok: true, path: result.filePaths[0] })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, 200, { ok: false, message: `打开路径选择框失败：${message}` })
+    }
+  }
+
   async function handleTestStart(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: '只支持 POST。' })
     if (testState.phase !== 'idle') return sendJson(res, 409, { ok: false, message: 'XTS 测试已在进行中，请等待其结束或先停止。' })
@@ -874,14 +917,17 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
       const body = await readBody(req)
       const value = currentSettings()
       const testCasesPath = text(body.testCasesPath) || text(value.testCasesPath) || DEFAULT_TESTCASES_PATH
-      const sns = parseSnsList(text(body.deviceSns) || text(value.deviceSns))
+      const testBoxSn = text(body.testBoxSn) || text(value.testBoxSn) || DEFAULT_TEST_BOX_SN
+      // 测试盒子不是被测设备——从清单里剔除（防御 settings.deviceSns 里存过盒子 SN 的旧数据）。
+      const sns = parseSnsList(text(body.deviceSns) || text(value.deviceSns)).filter((sn) => sn !== testBoxSn)
       const workbookPath = text(body.workbookPath) || text(value.workbookPath)
       if (!existsSync(testCasesPath)) return sendJson(res, 400, { ok: false, message: `测试用例路径不存在：${testCasesPath}` })
       if (sns.length === 0) return sendJson(res, 400, { ok: false, message: '没有填写被测设备 SN，已停止执行。' })
       if (!workbookPath) return sendJson(res, 400, { ok: false, message: '没有填写设备目录，测试报告不知道归档到哪里，已停止执行。' })
       if (!existsSync(workbookPath)) return sendJson(res, 400, { ok: false, message: `设备目录不存在：${workbookPath}` })
       const screen = text(body.screen) === 'yes' ? 'yes' : text(body.screen) === 'no' ? 'no' : ''
-      const testBoxSn = text(body.testBoxSn) || text(value.testBoxSn) || DEFAULT_TEST_BOX_SN
+      const suites = String(body.suites ?? '').split(/[,;\s]+/).map((item) => item.trim().toLowerCase()).filter((item) => ['ssts', 'hats', 'dcts', 'acts'].includes(item))
+      const onlyFailed = body.onlyFailed === true || body.onlyFailed === 'true'
       const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '')
       const artifactsDir = join(tmpdir(), `oh-xts-test-${stamp}`)
       try {
@@ -901,6 +947,7 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
         screens: undefined,
         rounds: undefined,
         unpassed: undefined,
+        artifactsDir,
         progress: { percent: 0, stage: '启动测试', detail: '正在校验设备与测试集清单。' },
       })
       const scriptArgs = [
@@ -911,6 +958,8 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
         '--box-sn', testBoxSn,
       ]
       if (screen) scriptArgs.push('--screen', screen)
+      if (suites.length > 0 && suites.length < 4) scriptArgs.push('--suites', suites.join(','))
+      if (onlyFailed) scriptArgs.push('--only-failed')
       const { execution, child } = runTestScript('xts_run_test.mjs', scriptArgs)
       testProcess = child
       sendJson(res, 200, { ok: true, message: 'XTS 测试已开始，进度见流水线。', artifacts: artifactsDir })
@@ -925,9 +974,21 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
   async function handleTestStop(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: '只支持 POST。' })
     if (testState.phase === 'idle') return sendJson(res, 200, { ok: true, message: '当前没有进行中的测试。' })
-    if (testProcess?.pid) killTree(testProcess.pid)
-    updateTestState({ phase: 'stopping', message: '正在停止测试，已归档的轮次保留。' })
-    sendJson(res, 200, { ok: true, message: '停止指令已发出，测试进程终止后状态会回到空闲。' })
+    updateTestState({ phase: 'stopping', message: '正在停止测试，已完成模块的报告会被归档。' })
+    // 优雅停止：写 STOP 标记文件，脚本会杀掉当前 xdevice、合成 summary 并归档本轮后自行退出；
+    // Windows 下 taskkill /F 不触发 SIGTERM，标记文件是脚本唯一的优雅停止通道，30 秒兜底硬杀。
+    const artifactsDir = testState.artifactsDir
+    if (artifactsDir) {
+      try { writeFileSync(join(artifactsDir, 'STOP'), new Date().toISOString()) } catch { /* 写不进就走硬杀兜底 */ }
+    }
+    void (async () => {
+      const graceDeadline = Date.now() + 30_000
+      while (testState.phase !== 'idle' && Date.now() < graceDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      if (testState.phase !== 'idle' && testProcess?.pid) killTree(testProcess.pid)
+    })()
+    sendJson(res, 200, { ok: true, message: '停止指令已发出，脚本归档完成后状态回到空闲。' })
   }
 
   async function handleTestProbe(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -1133,7 +1194,14 @@ async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerRespo
       const result = await runScript('device_pair.mjs', args, {}, [])
       const parsed = parseStructuredLine<{ ok: boolean; devices?: Array<Record<string, unknown>>; error?: string }>(result.output.split(/\r?\n/).reverse().find((line: string) => line.startsWith('DEVICE_LIST_JSON=')) ?? '', DEVICE_LIST_PREFIX)
       if (!parsed?.ok) return sendJson(res, 200, { ok: false, error: parsed?.error || `设备列表获取失败（脚本退出码 ${result.code}）。` })
-      sendJson(res, 200, { ok: true, devices: parsed.devices ?? [] })
+      let devices = parsed.devices ?? []
+      // 被测设备列表不包含测试盒子（盒子在「测试盒子」页管理；Xts 自动测试页 ?excludeBox=1）。
+      const requestUrl = new URL(req.url ?? '/', 'http://localhost')
+      if (requestUrl.searchParams.get('excludeBox') === '1') {
+        const boxSn = text(currentSettings().testBoxSn)
+        if (boxSn) devices = devices.filter((item) => String(item.sn ?? '').trim() !== boxSn)
+      }
+      sendJson(res, 200, { ok: true, devices })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       sendJson(res, 200, { ok: false, error: `设备列表失败：${message}` })
@@ -1228,9 +1296,7 @@ async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerRespo
     [`${API_PREFIX}/device/pair`, handleDevicePair],
     [`${API_PREFIX}/device/stop-pair`, handleDeviceStopPair],
     [`${API_PREFIX}/device/connect`, handleDeviceConnect],
-    [`${API_PREFIX}/device/list`, handleDeviceList],
-    [`${API_PREFIX}/device/pair`, handleDevicePair],
-    [`${API_PREFIX}/device/connect`, handleDeviceConnect],
+    [`${API_PREFIX}/dialog/pick`, handlePickPath],
     [`${API_PREFIX}/auth/status`, handleAuthStatus],
     [`${API_PREFIX}/auth/login`, handleAuthLogin],
     [`${API_PREFIX}/auth/logout`, handleAuthLogout],

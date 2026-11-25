@@ -49,39 +49,56 @@ export function MirrorPage(props: { state: RunState }): ReactElement {
 
   return (
     <>
-      <div className="page-head">
+      <div className="page-head--bar">
         <h1>镜像固件上传</h1>
-        <p>上传到平台「企业空间 → 镜像管理」，长任务后台执行、进度实时同步；平台已有同名固件自动跳过。</p>
-      </div>
-
-      <Panel title="固件包">
-        <div className="grid">
-          <Field id="mi-path" label="固件包路径" wide value={mirrorPath} placeholder="单个 .zip / .7z，或包含固件包的目录"
-            hint="支持 .zip / .7z / tar"
-            disabled={busy} onChange={(value) => setMirrorPath(value)} />
-        </div>
-        <div className="actions">
-          <button className="btn" disabled={busy} onClick={() => void run(true)}>校验固件</button>
+        <span className="page-head__meta">上传到平台「企业空间 → 镜像管理」· 平台已有同名固件自动跳过 · 长任务后台执行</span>
+        <span className="page-head__actions">
+          <button className="btn btn--small" disabled={busy} onClick={() => void run(true)}>校验固件</button>
           <button className="btn btn--primary" disabled={busy} onClick={() => void run(false)}>{running ? '上传中…' : '上传固件'}</button>
+        </span>
+      </div>
+      <div className="workbench">
+        <div className="workbench__main">
+          <Panel title="固件包">
+            <div className="grid">
+              <Field id="mi-path" label="固件包路径" wide mono pick="file" altPick="directory" extensions={['zip', '7z']} value={mirrorPath} placeholder="点右侧按钮选固件包（.zip / .7z）或它所在的目录"
+                hint="型号-8 位日期命名（.zip / .7z）；上传前查重，同名跳过并显示已有记录的上传时间"
+                disabled={busy} onChange={(value) => setMirrorPath(value)} />
+            </div>
+          </Panel>
+          <Panel title="平台规则">
+            <p className="note">上传到平台「企业空间 → 镜像管理」。平台已有同名固件时自动跳过并显示原上传时间；同名记录未完成（&lt;100%）时平台会沿用该记录续传。目录里出现多份固件时，文件名含 8 位日期的优先。</p>
+            <p className="note">评测资料提交第 4 步会按文件名在平台镜像库中选择刚上传的固件，所以先传固件再提交资料。</p>
+          </Panel>
+          {pageError ? <StatusLine tone="error">{pageError}</StatusLine> : null}
         </div>
-      </Panel>
-
-      {isMirror ? (
-        <Panel title={title} meta={meta}>
-          <div className="progress-top">
-            <span>{stage || (running ? '上传中' : '已结束')}</span>
-            <span className="muted">{Math.round(value)}%</span>
-          </div>
-          <Bar percent={value} danger={failed} label="镜像固件上传进度" />
-          {detail ? <p className="path">{detail}</p> : null}
-          {str(mirror?.platformStatus) ? <p className="path">{`平台回执：${str(mirror?.platformStatus)}`}</p> : null}
-          {duplicates > 1 ? <p className="problem">{`平台「镜像管理」里有 ${duplicates} 条同名镜像，属历史重复；这里只提示不删除，需要时请到平台手动清理。`}</p> : null}
-          {running ? <p className="muted">上传期间不要关闭应用；完成后这里会显示平台回执。</p> : null}
-        </Panel>
-      ) : null}
-
-      {pageError ? <StatusLine tone="error">{pageError}</StatusLine> : null}
-      {isMirror && state.message && !running ? <StatusLine tone={state.ok === false ? 'error' : 'ok'}>{str(state.message)}</StatusLine> : null}
+        <div className="workbench__side">
+          <Panel title={title} meta={meta || undefined}>
+            {isMirror ? (
+              <>
+                <div className="progress-top">
+                  <span>{stage || (running ? '上传中' : '已结束')}</span>
+                  <span className="muted">{Math.round(value)}%</span>
+                </div>
+                <Bar percent={value} danger={failed} label="镜像固件上传进度" />
+                {detail ? <p className="path" title={detail}>{detail}</p> : null}
+                {str(mirror?.platformStatus) ? <p className="path" title={`平台回执：${str(mirror?.platformStatus)}`}>{`平台回执：${str(mirror?.platformStatus)}`}</p> : null}
+                {duplicates > 1 ? <p className="problem">{`平台「镜像管理」里有 ${duplicates} 条同名镜像，属历史重复；这里只提示不删除，需要时请到平台手动清理。`}</p> : null}
+                {running ? <p className="muted">上传期间不要关闭应用；完成后这里会显示平台回执。</p> : null}
+              </>
+            ) : (
+              <p className="empty">还没有上传任务。选好固件包后点右上角「上传固件」，进度会显示在这里。</p>
+            )}
+          </Panel>
+          <Panel title="平台回执" fill scroll>
+            {isMirror && state.message && !running ? (
+              <StatusLine tone={state.ok === false ? 'error' : 'ok'}>{str(state.message)}</StatusLine>
+            ) : (
+              <p className="empty">{running ? '上传完成后平台回执显示在这里。' : '还没有平台回执。'}</p>
+            )}
+          </Panel>
+        </div>
+      </div>
     </>
   )
 }

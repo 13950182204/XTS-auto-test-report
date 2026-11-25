@@ -28,32 +28,35 @@ export function SettingsPage(): ReactElement {
 
   return (
     <>
-      <div className="page-head">
+      <div className="page-head--bar">
         <h1>设置</h1>
-        <p>应用外观等软件配置；平台账号在各功能页登录管理。</p>
+        <span className="page-head__meta">只放软件配置 · 平台账号在各功能页登录管理</span>
       </div>
+      <div className="workbench workbench--single">
+        <div className="workbench__main main-narrow">
+          <Panel title="外观">
+            <div className="theme-grid">
+              {THEME_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  className={`theme-card${theme === option.id ? ' theme-card--active' : ''}`}
+                  onClick={() => changeTheme(option.id)}
+                >
+                  <span className="theme-swatch" style={{ background: option.swatch }} />
+                  <span className="theme-label">{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </Panel>
 
-      <Panel title="外观">
-        <div className="theme-grid">
-          {THEME_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              className={`theme-card${theme === option.id ? ' theme-card--active' : ''}`}
-              onClick={() => changeTheme(option.id)}
-            >
-              <span className="theme-swatch" style={{ background: option.swatch }} />
-              <span className="theme-label">{option.label}</span>
-            </button>
-          ))}
+          <Panel title="关于">
+            <p className="path">{`XTS 报告上传 · v0.3.0`}</p>
+            <p className="path">凭据保存在本机用户数据目录（0600 / DPAPI 加密）；业务脚本与 DSH 插件同源。</p>
+          </Panel>
+
+          {note ? <StatusLine tone={noteTone}>{note}</StatusLine> : null}
         </div>
-      </Panel>
-
-      <Panel title="关于">
-        <p className="path">{`XTS 报告上传 · v0.3.0`}</p>
-        <p className="path">凭据保存在本机用户数据目录（0600 / DPAPI 加密）；业务脚本与 DSH 插件同源。</p>
-      </Panel>
-
-      {note ? <StatusLine tone={noteTone}>{note}</StatusLine> : null}
+      </div>
     </>
   )
 }

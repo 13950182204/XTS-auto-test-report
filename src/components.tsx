@@ -1,17 +1,26 @@
-import type { ReactElement, ReactNode } from 'react'
+import { useState, type ReactElement, type ReactNode } from 'react'
+import { request } from './api.js'
 
 /** 共享展示组件：面板 / chips / 进度条 / 状态行 / 字段（设计系统见 styles.css）。 */
 
-export function Panel(props: { title: string; meta?: string; children?: ReactNode }): ReactElement {
+export function Panel(props: { title: string; meta?: string; actions?: ReactNode; fill?: boolean; scroll?: boolean; scrollMax?: number; children?: ReactNode }): ReactElement {
   return (
-    <div className="panel">
+    <div className={`panel${props.fill ? ' panel--fill' : ''}`}>
       <div className="panel-head">
         <span className="panel-title">{props.title}</span>
         {props.meta ? <span className="panel-meta">{props.meta}</span> : null}
+        {props.actions ? <span className="panel-head__actions">{props.actions}</span> : null}
       </div>
-      {props.children}
+      {props.scroll ? (
+        <div className="panel__scroll" style={props.scrollMax ? { maxHeight: props.scrollMax } : undefined}>{props.children}</div>
+      ) : props.children}
     </div>
   )
+}
+
+/** mono 长文本（SN / 路径）：单行截断，悬停显示全文。 */
+export function MonoLine(props: { value: string }): ReactElement {
+  return <span className="mono-line" title={props.value}>{props.value}</span>
 }
 
 export function Chip(props: { tone: string; children: string }): ReactElement {
@@ -42,22 +51,69 @@ export type FieldProps = {
   mono?: boolean
   textarea?: boolean
   disabled?: boolean
+  /** 路径字段：显示「选择…」按钮走系统对话框，输入框本身只读（用户要求不再手填路径）。 */
+  pick?: 'directory' | 'file'
+  /** 第二个选择按钮（例如固件包既能选文件也能选所在目录）。 */
+  altPick?: 'directory' | 'file'
+  /** 文件对话框的扩展名过滤，不带点（zip / 7z / txt）。 */
+  extensions?: string[]
   onChange: (value: string) => void
 }
 
 export function Field(props: FieldProps): ReactElement {
   const className = `input${props.mono ? ' input--mono' : ''}`
+  const [picking, setPicking] = useState(false)
+  const pickable = props.pick !== undefined || props.altPick !== undefined
+  const readOnly = props.pick !== undefined
+  const [pickerError, setPickerError] = useState('')
+
+  async function pick(mode: 'directory' | 'file'): Promise<void> {
+    if (props.disabled || picking) return
+    setPicking(true); setPickerError('')
+    const response = await request<{ ok: boolean; path?: string; canceled?: boolean; message?: string }>('dialog/pick', 'POST', {
+      mode,
+      title: `${mode === 'file' ? '选择文件' : '选择文件夹'} · ${props.label}`,
+      defaultPath: props.value,
+      extensions: props.extensions ?? [],
+    })
+    setPicking(false)
+    if (!response.ok) { setPickerError(response.message || '打开选择框失败。'); return }
+    if (response.path) props.onChange(response.path)
+  }
+
+  const buttons = pickable ? (
+    <span className="field-path__actions">
+      {props.pick ? (
+        <button type="button" className="btn btn--small" disabled={props.disabled || picking} onClick={() => void pick(props.pick!)}>
+          {picking ? '…' : props.pick === 'directory' ? '选择文件夹' : '选择文件'}
+        </button>
+      ) : null}
+      {props.altPick ? (
+        <button type="button" className="btn btn--small" disabled={props.disabled || picking} onClick={() => void pick(props.altPick!)}>
+          {props.altPick === 'directory' ? '选文件夹' : '选文件'}
+        </button>
+      ) : null}
+    </span>
+  ) : null
+
   return (
     <label className={`field${props.wide ? ' field--wide' : ''}`} htmlFor={props.id}>
       <span className="label">{props.label}</span>
       {props.textarea ? (
         <textarea id={props.id} className={className} value={props.value} placeholder={props.placeholder} disabled={props.disabled}
           onChange={(event) => props.onChange(event.target.value)} />
+      ) : pickable ? (
+        <span className="field-path">
+          <input id={props.id} className={className} type="text" value={props.value} placeholder={props.placeholder}
+            disabled={props.disabled} readOnly={readOnly} onChange={(event) => props.onChange(event.target.value)} />
+          {buttons}
+        </span>
       ) : (
         <input id={props.id} className={className} type={props.type ?? 'text'} value={props.value} placeholder={props.placeholder}
           disabled={props.disabled} onChange={(event) => props.onChange(event.target.value)} />
       )}
       {props.hint ? <span className="hint">{props.hint}</span> : null}
+      {pickerError ? <span className="hint hint--error">{pickerError}</span> : null}
     </label>
   )
 }
