@@ -193,33 +193,69 @@ async function resolveSuiteRoot(rawPath) {
 
 /**
  * 确认 `python -m xdevice` 可用；不可用时按 run.bat 的做法就地修复一次：
- * ① 补 setuptools（提供 pkg_resources，xdevice/__init__.py 依赖它）；
- * ② 用套件 tools/ 下的离线包 --user 安装；
- * ③ 再自检，仍失败就把解释器路径与真实报错抛出来，而不是让测试「莫名其妙跑不起来」。
+ * 保证 `python -m xdevice` 可用，且用的是**该套件自己**那份离线包。
+ * ① 缺 pkg_resources（setuptools）先补；
+ * ② 已装 xdevice 与 <suite>/tools/xdevice-*.tar.gz 的版本指纹不一致 → 卸载重装该套件的整套离线包；
+ * ③ 装完再自检，仍失败就把解释器路径与真实报错抛出来。
+ *
+ * 版本规律（2026-11-25 实测，见 AGENTS.md）：**ssts 是旧版，acts/acts-validator/hats/dcts 是新版**。
+ * 旧版报告 = details/failures/passes_report.html；新版 = static/ + summary_report.html。
+ * 这是上游套件包自带的差异，不是缺陷，不要试图统一。
  */
-async function ensureXdeviceReady({ python, testcaseRoot, onDetail }) {
-  const probe = ['-c', 'import xdevice, pkg_resources; print("xdevice-ok")'];
-  const first = await runCommand(python, probe, { timeoutMs: 60000 });
-  if (first.code === 0) return;
-  const reason = (first.stderr || first.stdout || `退出码 ${first.code}`).trim().split(/\r?\n/).filter(Boolean).pop() || '';
-  onDetail(`xdevice 自检未通过（${reason}），按 run.bat 的方式修复依赖…`);
-  const setuptools = await runCommand(python, ['-m', 'pip', 'install', '--user', 'setuptools==75.8.0',
-    '--timeout', '20', '--retries', '1', '--disable-pip-version-check'], { timeoutMs: 240000 });
+/**
+ * 已装 xdevice 的报告版本指纹：新版（acts/hats/dcts 包）的 result_reporter 里有
+ * `_generate_test_report` 且走它；旧版（ssts 包）只有 `_generate_vision_reports`。
+ * 不能用 template/static 目录判断——重装其它套件版本后目录会残留（2026-11-25 实测）。
+ */
+const XDEVICE_VERSION_PROBE = [
+  '-c',
+  'import xdevice,os;'
+  + 'f=os.path.join(os.path.dirname(xdevice.__file__),"_core","report","result_reporter.py");'
+  + 't=open(f,encoding="utf-8").read();'
+  + 'print("new" if "self._generate_test_report()" in t else "old")',
+];
+
+async function ensureXdeviceReady({ python, testcaseRoot, suite, onDetail }) {
+  // ohos 一起 import：单装 xdevice 主包会让 ohos 插件与 DeviceTestType 常量不匹配，
+  // `run` 起来就 AttributeError: DeviceTestType has no attribute 'validator_test'（2026-11-25 实测）。
+  const probe = ['-c', 'import xdevice, pkg_resources, ohos; print("xdevice-ok")'];
+  const fpProbe = XDEVICE_VERSION_PROBE;
+  const suiteTools = path.join(testcaseRoot, suite, 'tools');
   const tarballs = [];
-  for (const suite of SUITE_DIR_NAMES) {
-    const toolsDir = path.join(testcaseRoot, suite, 'tools');
-    for (const name of await fs.readdir(toolsDir).catch(() => [])) {
-      if (name.endsWith('.tar.gz') || name.endsWith('.egg')) tarballs.push(path.join(toolsDir, name));
-    }
-    if (tarballs.length > 0) break; // 各套件 tools 内容相同，取第一个有内容的
+  for (const name of await fs.readdir(suiteTools).catch(() => [])) {
+    if (name.endsWith('.tar.gz') || name.endsWith('.egg')) tarballs.push(path.join(suiteTools, name));
   }
+  // 该套件期望的报告版本：新版（acts/hats/dcts）= result_reporter 里有 _generate_test_report；ssts 版没有。
+  const coreTarball = tarballs.find((item) => /xdevice-\d/.test(path.basename(item)));
+  const expectNewReport = await tarHasNewReporter(coreTarball);
+
+  const first = await runCommand(python, probe, { timeoutMs: 60000 });
+  let needInstall = first.code !== 0;
+  if (!needInstall) {
+    const fp = await runCommand(python, fpProbe, { timeoutMs: 60000 });
+    const installedNew = /new/.test(fp.stdout);
+    if (installedNew !== expectNewReport) {
+      onDetail?.(`已装 xdevice 的报告版本与该套件(${suite})不一致（该套件需要${expectNewReport ? '新版' : '旧版(ssts)'}报告，当前是${installedNew ? '新版' : '旧版'}），重装 ${suite}/tools 里的离线包…`);
+      needInstall = true;
+    }
+  }
+  if (!needInstall) return;
+
+  if (first.code !== 0) {
+    const reason = (first.stderr || first.stdout || `退出码 ${first.code}`).trim().split(/\r?\n/).filter(Boolean).pop() || '';
+    onDetail?.(`xdevice 自检未通过（${reason}），按 run.bat 的方式修复依赖…`);
+    await runCommand(python, ['-m', 'pip', 'install', '--user', 'setuptools==75.8.0',
+      '--timeout', '20', '--retries', '1', '--disable-pip-version-check'], { timeoutMs: 240000 });
+  }
+  await runCommand(python, ['-m', 'pip', 'uninstall', '-y', 'xdevice', 'xdevice-ohos', 'xdevice-ohos-plugin', 'xdevice-devicetest'],
+    { timeoutMs: 120000 });
   for (const tarball of tarballs) {
-    onDetail(`安装离线包 ${path.basename(tarball)}`);
+    onDetail?.(`安装离线包 ${path.basename(tarball)}`);
     await runCommand(python, ['-m', 'pip', 'install', '--user', tarball, '--disable-pip-version-check'], { timeoutMs: 300000 });
   }
   const second = await runCommand(python, probe, { timeoutMs: 60000 });
   if (second.code === 0) {
-    onDetail('xdevice 依赖已修复，继续执行。');
+    onDetail?.(`xdevice 依赖已就绪（${suite} 版）。`);
     return;
   }
   const detail = (second.stderr || second.stdout || '').trim().slice(-600);
@@ -229,6 +265,32 @@ async function ensureXdeviceReady({ python, testcaseRoot, onDetail }) {
     + (tarballs[0] ? ` 与 ${python} -m pip install --user "${tarballs[0]}"` : '')
     + ' 后重试。',
   );
+}
+
+/** tarball 里的 xdevice 是否是新版报告（result_reporter.py 里有 _generate_test_report）。 */
+async function tarHasNewReporter(tarball) {
+  if (!tarball) return false;
+  const dir = path.join(path.dirname(tarball), '.probe-xdevice');
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+  const extract = await runCommand('tar', ['xzf', tarball, '-C', dir], { timeoutMs: 120000 });
+  if (extract.code !== 0) return false;
+  const found = await findFile(dir, 'result_reporter.py');
+  const text = found ? await fs.readFile(found, 'utf8').catch(() => '') : '';
+  await fs.rm(dir, { recursive: true, force: true });
+  return text.includes('self._generate_test_report()');
+}
+
+async function findFile(dir, name) {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const hit = await findFile(full, name);
+      if (hit) return hit;
+    } else if (entry.name === name) return full;
+  }
+  return '';
 }
 
 /**
@@ -304,30 +366,46 @@ async function resolveHdcExecutable(hdc) {
 }
 
 /**
- * 执行套件 resource/ 下的资源安装 bat（如 dcts_resource.bat）。套件原文件不动，坑点就地处理：
- * - bat 里全是裸 `hdc`，多设备在线时会直接失败 → 在工作区生成 hdc.cmd shim（`-t <sn> %*`）
- *   并把它排进 PATH 最前；bat 用 @start 拉起的服务窗口继承同一 PATH，同样落对设备；
- * - bat 结尾有 `pause` → stdin 给 'ignore'（EOF 直接放行），不会卡住；
- * - bat 会 `hdc shell reboot` 且只等 30 秒 → 返回后由调用方轮询设备回线。
+ * 执行套件 resource/ 下的资源安装 bat（如 dcts_resource.bat）。
+ * 套件原文件不动：整目录复制到 <workspace>/resource-<suite>，把副本里所有 .bat 的裸 `hdc`
+ * 改成 `"<hdc.exe>" -t <sn>`，再跑副本入口。
+ *
+ * 为什么不用 hdc.cmd shim 注入 PATH：批处理里裸调用 `hdc`（无 call）且命中 .cmd 时，
+ * cmd 会把控制权交给 shim 而**不返回**——dcts_resource.bat 第一行 `hdc shell mount` 就结束，
+ * 后面的 push/install/reboot 全不执行，退出码还是 0（2026-11-25 实测：DCTS 6 个 SoftBus
+ * 模块连续失败 3 轮，设备上根本没有 dsoftbusTest/test.wav）。
+ * `@start permission.bat` 拉起的子窗口 cwd 继承副本目录，同样命中改好的副本。
+ * bat 结尾的 `pause` 与中间的 `timeout` 在 stdin=ignore 下 EOF 放行，不会卡住。
  */
 async function runResourceBat(batFile, sn, hdc, workspace, onDetail) {
   const realHdc = await resolveHdcExecutable(hdc);
-  let env = process.env;
-  if (realHdc && path.win32.extname(realHdc).toLowerCase() === '.exe') {
-    const shimDir = path.join(workspace, 'hdc-shim');
-    await fs.mkdir(shimDir, { recursive: true });
-    const shim = ['@echo off', `"${realHdc}" -t ${sn} %*`].join('\r\n');
-    await fs.writeFile(path.join(shimDir, 'hdc.cmd'), shim, 'utf8');
-    env = { ...process.env, PATH: `${shimDir};${path.dirname(realHdc)};${process.env.PATH ?? ''}` };
+  const sourceDir = path.dirname(batFile);
+  const targetDir = path.join(workspace, `resource-${path.basename(sourceDir)}`);
+  await fs.rm(targetDir, { recursive: true, force: true });
+  await fs.cp(sourceDir, targetDir, { recursive: true });
+
+  if (realHdc) {
+    const prefix = `"${realHdc}" -t ${sn}`;
+    for (const name of await fs.readdir(targetDir)) {
+      if (!name.toLowerCase().endsWith('.bat')) continue;
+      const file = path.join(targetDir, name);
+      const text = await fs.readFile(file, 'utf8');
+      // 行首/空白后的裸 hdc；已是绝对路径或带引号的不动。
+      const patched = text.replace(/(^|\s)hdc(?=\s)/g, `$1${prefix}`);
+      if (patched !== text) await fs.writeFile(file, patched, 'utf8');
+    }
+    onDetail?.(`已把 resource 副本里的 hdc 固定到设备 ${sn}：${targetDir}`);
   } else {
     onDetail?.('未解析到 hdc.exe 路径，bat 里的 hdc 按默认目标执行（请确保目标机是 hdc 默认设备）。');
   }
-  onDetail?.(`执行 ${path.basename(batFile)} 安装测试工具（目标设备 ${sn}，会重启设备并等待回线）…`);
-  const result = await runCommand('cmd', ['/c', batFile], {
+
+  const runBat = path.join(targetDir, path.basename(batFile));
+  onDetail?.(`执行 ${path.basename(runBat)} 安装测试工具（目标设备 ${sn}，会重启设备并等待回线）…`);
+  const result = await runCommand('cmd', ['/c', runBat], {
     timeoutMs: RESOURCE_BAT_TIMEOUT_MS,
     spawnOptions: {
-      cwd: path.dirname(batFile),
-      env,
+      cwd: targetDir,
+      env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   });
@@ -1045,14 +1123,18 @@ async function doRun(args) {
     }
     const minSetDir = minSetDirName ? path.join(minSetParent, minSetDirName) : '';
     // —— xdevice 自检（对应 run.bat 的第 1/3 步）——
-    // 应用平时直接 `python -m xdevice`（跳过 run.bat 每次的 pip 重装），一旦 Python 升级、
-    // setuptools 被删、离线包没装上，就只剩「跑不起来」；这里先自检，失败时按 run.bat 的方式修一次。
+    // 各套件 tools/ 里的 xdevice 是各自打包的（dcts/hats/acts 版才有新版报告模板与
+    // _generate_test_report；ssts 版只有旧版 details/failures/passes_report.html）。
+    // 所以不能只判断「能 import」，必须按套件核对版本指纹，跑的套件不匹配就重装成它自己的那份。
     if (!args['dry-run']) {
-      await ensureXdeviceReady({
-        python,
-        testcaseRoot,
-        onDetail: (detail) => emitProgress({ percent: 1, stage: '环境自检', detail }),
-      });
+      for (const suite of new Set(plan.map((step) => (step.suite === 'hats-hdf' ? 'hats' : step.suite)))) {
+        await ensureXdeviceReady({
+          python,
+          testcaseRoot,
+          suite,
+          onDetail: (detail) => emitProgress({ percent: 1, stage: '环境自检', detail }),
+        });
+      }
     }
 
     const listsDirectory = path.join(artifacts, 'lists');
