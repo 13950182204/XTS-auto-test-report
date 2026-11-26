@@ -222,6 +222,7 @@ async function reviewSuite({ suite, deviceDir, minSetDir, screen }) {
     exemptedItems: [],
     unexemptedItems: [],
     problems: [],
+    warnings: [],
     ok: false,
   };
 
@@ -292,13 +293,14 @@ async function reviewSuite({ suite, deviceDir, minSetDir, screen }) {
     else result.unexemptedItems.push(record);
   }
 
+  // 参考口径只用于提示：套件内容随版本变，数量不同不代表资料有问题，不能当阻塞。
   if (REFERENCE[suite.key]) {
     const ref = REFERENCE[suite.key];
     if (ref.tests && result.tests && result.tests !== ref.tests) {
-      result.problems.push(`用例数 ${result.tests} 与参考 ${ref.tests} 不一致`);
+      result.warnings.push(`用例数 ${result.tests}，参考口径 ${ref.tests}`);
     }
     if (ref.modules && result.ranModules && result.ranModules !== ref.modules) {
-      result.problems.push(`模块数 ${result.ranModules} 与参考 ${ref.modules} 不一致`);
+      result.warnings.push(`模块数 ${result.ranModules}，参考口径 ${ref.modules}`);
     }
   }
   if (result.missingModules.length > 0) {
@@ -342,6 +344,7 @@ async function main() {
       passed: suites.filter((item) => item.ok).length,
       blocked: blocking.length,
       unexempted: suites.reduce((sum, item) => sum + item.unexemptedItems.length, 0),
+      warnings: suites.reduce((sum, item) => sum + item.warnings.length, 0),
       missingModules: suites.reduce((sum, item) => sum + item.missingModules.length, 0),
     },
     notes: [screenInfo.note].filter(Boolean),

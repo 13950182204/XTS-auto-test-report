@@ -21,6 +21,7 @@ type ReviewSuite = {
   exemptedItems?: ReviewItem[]
   unexemptedItems?: ReviewItem[]
   problems?: string[]
+  warnings?: string[]
   ok?: boolean
 }
 
@@ -73,9 +74,12 @@ export function ReportReviewPage(): ReactElement {
   const verdict = review?.verdict ?? ''
   const summary = review?.summary ?? {}
   const screenLabel = review?.screen === 'yes' ? '有屏' : review?.screen === 'no' ? '无屏' : '未知'
-  const failedEntries = suites.flatMap((suite) => (suite.failedItems ?? []).map((item) => ({ suite, item })))
+  const failedEntries = suites
+    .flatMap((suite) => (suite.failedItems ?? []).map((item) => ({ suite, item })))
+    .sort((a, b) => Number(Boolean(a.item.waiverPath)) - Number(Boolean(b.item.waiverPath)))
   const missingEntries = suites.flatMap((suite) => (suite.missingModules ?? []).map((module) => ({ suite, module })))
   const failedCount = failedEntries.length
+  const unexemptedCount = failedEntries.filter(({ item }) => !item.waiverPath).length
   const missingCount = missingEntries.length
 
   return (
@@ -106,6 +110,7 @@ export function ReportReviewPage(): ReactElement {
                   <div className="row-top">
                     <Chip tone={verdict === 'pass' ? 'ok' : 'warn'}>{verdict === 'pass' ? '可以提交' : '还有阻塞项'}</Chip>
                     <span className="chip chip--neutral">{`${screenLabel}设备`}</span>
+                    <span className="chip chip--neutral">{`未通过模块 ${failedCount}${unexemptedCount > 0 ? ` · 未豁免 ${unexemptedCount}` : ''}`}</span>
                     {review.screenSource ? <span className="path">{review.screenSource}</span> : null}
                   </div>
                   <p className="path" title={review.minSetDir}>{`最小测试集：${review.minSetDir || '未匹配到'}`}</p>
@@ -128,7 +133,13 @@ export function ReportReviewPage(): ReactElement {
                       </div>
                       <Bar percent={suite.ok ? 100 : 55} danger={!suite.ok} label={`${suite.label} 复审`} />
                       <p className="path">{`缺失 ${suite.missingModules?.length ?? 0} · 有豁免 ${suite.exemptedItems?.length ?? 0} · 未豁免 ${suite.unexemptedItems?.length ?? 0}${suite.reportDir ? ` · ${suite.rounds ?? 1} 轮` : ''}`}</p>
-                      {suite.problems?.length ? <p className="problem">{suite.problems.join('；')}</p> : null}
+                      {(suite.failedItems?.length ?? 0) > 0 ? (
+                        <p className="path" title={(suite.failedItems ?? []).map((item) => item.module).join('、')}>
+                          {`未通过：${(suite.failedItems ?? []).slice(0, 4).map((item) => `${item.module ?? ''}${item.waiverPath ? '(已豁免)' : '(未豁免)'}`).join('、')}${(suite.failedItems?.length ?? 0) > 4 ? ' …' : ''}`}
+                        </p>
+                      ) : null}
+                      {suite.problems?.length ? <p className="problem">{`阻塞：${suite.problems.join('；')}`}</p> : null}
+                      {suite.warnings?.length ? <p className="path">{`提示（不影响结论）：${suite.warnings.join('；')}`}</p> : null}
                     </li>
                   ))}
                 </ul>
