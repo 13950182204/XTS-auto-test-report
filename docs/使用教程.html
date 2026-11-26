@@ -99,11 +99,14 @@
     font-size: 21px; margin: 0 0 6px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; gap: 10px;
   }
+  main { counter-reset: sec; }
+  section > h2 { counter-increment: sec; }
   section > h2 .num {
     width: 26px; height: 26px; border-radius: 8px; flex: 0 0 auto;
     background: var(--brand); color: #fff; font-size: 13px; font-weight: 700;
     display: grid; place-items: center;
   }
+  section > h2 .num::before { content: counter(sec); }
   section > p.lead { color: var(--text-2); margin: 12px 0 18px; }
   h3 { font-size: 16px; margin: 26px 0 10px; }
   h4 { font-size: 14px; margin: 18px 0 8px; color: var(--text-2); letter-spacing: .02em; }
@@ -166,6 +169,111 @@
     main { max-width: none; padding: 0; }
     section { break-inside: avoid; }
   }
+
+  /* —— 交互式引导 —— */
+  .tour-launch { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 18px 0 6px; }
+  .btn-lg {
+    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+    background: var(--brand); color: #fff; border: none; border-radius: 10px; padding: 11px 22px;
+  }
+  .btn-lg:hover { filter: brightness(1.08); }
+  .btn-lg--ghost { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  .tour-progress-txt { color: var(--text-2); font-size: 13px; }
+  .tour-progress-txt b { color: var(--ok); }
+
+  .tour-overlay {
+    position: fixed; inset: 0; z-index: 100; display: none;
+    background: rgba(6, 8, 12, .72); backdrop-filter: blur(3px);
+    align-items: center; justify-content: center; padding: 24px;
+  }
+  .tour-overlay.open { display: flex; }
+  .tour-window {
+    position: relative; width: min(1000px, 96vw); height: min(640px, 90vh);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .5);
+    display: grid; grid-template-rows: 38px minmax(0, 1fr) 52px; overflow: hidden;
+  }
+  .tour-titlebar {
+    display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    background: var(--bg-soft); border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--text-3);
+  }
+  .tour-titlebar i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--border); margin-right: 4px; }
+  .tour-titlebar i:nth-child(1) { background: #e05656; }
+  .tour-titlebar i:nth-child(2) { background: #d9a23b; }
+  .tour-titlebar i:nth-child(3) { background: #3fb96f; }
+  .tour-body { display: grid; grid-template-columns: 168px minmax(0, 1fr); min-height: 0; }
+
+  .mock-side { background: var(--bg-soft); border-right: 1px solid var(--border); padding: 10px 8px; }
+  .mock-brand { display: flex; align-items: center; gap: 8px; padding: 4px 6px 12px; font-size: 12.5px; color: var(--text-2); }
+  .mock-brand span.logo { width: 24px; height: 24px; border-radius: 7px; background: var(--brand); color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 700; }
+  .mock-nav { display: grid; gap: 2px; }
+  .mock-nav span {
+    display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px;
+    font-size: 12.5px; color: var(--text-3);
+  }
+  .mock-nav span.on { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+
+  .mock-main { padding: 14px 16px; overflow: hidden; display: grid; gap: 10px; align-content: start; }
+  .mock-h { font-size: 12px; color: var(--brand); font-weight: 600; margin-bottom: 2px; }
+  .mock-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px; }
+  .mock-field { display: grid; gap: 5px; margin-top: 8px; }
+  .mock-field > label { font-size: 11.5px; color: var(--text-3); }
+  .mock-input {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
+    padding: 7px 9px; font-size: 12px; color: var(--text-2); font-family: var(--mono);
+  }
+  .mock-input .pick { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-family: var(--sans); color: var(--text); font-size: 11.5px; white-space: nowrap; }
+  .mock-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .mock-btn { font-size: 12px; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text-2); }
+  .mock-btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+  .mock-row { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-2); }
+  .mock-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+  .mock-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--text-3); background: var(--bg); }
+  .mock-card b { display: block; color: var(--text-2); font-size: 12px; margin-bottom: 2px; }
+  .mock-card.on { border-color: var(--brand); background: var(--brand-soft); }
+  .mock-tag { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-3); }
+  .mock-tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+  .mock-tag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+  .mock-bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 7px; overflow: hidden; }
+  .mock-bar > i { display: block; height: 100%; width: 62%; background: var(--brand); }
+  .mock-cols { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 10px; }
+  .mock-list { display: grid; gap: 6px; margin-top: 8px; }
+  .mock-line { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--text-3); border-bottom: 1px dashed var(--border); padding-bottom: 5px; }
+  .mock-line:last-child { border-bottom: none; }
+
+  .tour-spot {
+    position: fixed; z-index: 200; border-radius: 10px; pointer-events: none;
+    box-shadow: 0 0 0 2px var(--brand), 0 0 0 9999px rgba(4, 6, 10, .66);
+    transition: all .18s ease;
+  }
+  .tour-tip {
+    position: fixed; z-index: 210; width: 310px; pointer-events: auto;
+    background: var(--bg-card); border: 1px solid var(--brand); border-radius: 12px;
+    padding: 14px 16px; box-shadow: 0 16px 48px rgba(0, 0, 0, .45);
+  }
+  .tour-tip__step { font-size: 11px; color: var(--brand); font-weight: 600; letter-spacing: .04em; }
+  .tour-tip__title { font-size: 15px; font-weight: 700; margin: 4px 0 6px; }
+  .tour-tip__body { font-size: 13px; color: var(--text-2); line-height: 1.62; }
+  .tour-tip__hint { font-size: 12px; color: var(--warn); margin-top: 8px; }
+  .tour-tip__actions { display: flex; gap: 8px; margin-top: 12px; }
+  .tour-tip__actions button { font: inherit; font-size: 12.5px; cursor: pointer; padding: 6px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); }
+  .tour-tip__actions button.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+  .tour-tip__actions button:disabled { opacity: .45; cursor: default; }
+
+  .tour-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 14px; border-top: 1px solid var(--border); background: var(--bg-soft); font-size: 12px; color: var(--text-3); }
+  .tour-dots { display: flex; gap: 5px; }
+  .tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .tour-dots i.on { background: var(--brand); }
+
+  /* —— 试算器 —— */
+  .calc { display: grid; gap: 10px; }
+  .calc__opt { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; color: var(--text-2); cursor: pointer; }
+  .calc__opt input { margin-top: 4px; accent-color: var(--brand); }
+  .calc__out { border-radius: 10px; padding: 12px 14px; font-size: 13.5px; border: 1px solid var(--border); background: var(--bg-soft); }
+  .calc__out.ok { border-color: var(--ok); color: var(--ok); }
+  .calc__out.bad { border-color: var(--danger); color: var(--danger); }
+  .calc__out small { display: block; color: var(--text-2); font-size: 12.5px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -182,6 +290,7 @@
     </div>
     <h2>开始</h2>
     <ol>
+      <li><a href="#tour">交互式引导（可点）</a></li>
       <li><a href="#quickstart">五分钟跑通一次提交</a></li>
       <li><a href="#env">环境与目录约定</a></li>
       <li><a href="#login">登录与账号</a></li>
@@ -224,9 +333,36 @@
       </ol>
     </div>
 
+    <!-- 交互式引导 -->
+    <section id="tour">
+      <h2><span class="num"></span>交互式引导</h2>
+      <p class="lead">不想读文档？直接点下面按钮，在模拟界面里一步步走完整条流程：高亮会指出每个按钮在哪，你只管点「下一步」。</p>
+
+      <div class="card">
+        <div class="tour-launch">
+          <button class="btn-lg" id="tourStart" type="button">▶ 开始交互引导（15 步）</button>
+          <button class="btn-lg btn-lg--ghost" id="tourReset" type="button">重置进度</button>
+          <span class="tour-progress-txt" id="tourProgressTxt"></span>
+        </div>
+        <p style="margin:10px 0 0;font-size:13px;color:var(--text-3)">键盘：<span class="kbd">←</span> <span class="kbd">→</span> 翻页，<span class="kbd">Esc</span> 退出。进度存在本机，下次接着看。</p>
+      </div>
+
+      <h3>三个最容易搞错的地方，先在这里试一遍</h3>
+      <div class="card">
+        <div class="calc">
+          <div class="mock-h">试算：这次复审能不能提交？</div>
+          <label class="calc__opt"><input type="checkbox" id="calcMissing"><span>最小测试集里有模块<b>没跑到</b>（例如 HATS 差 3 个模块）</span></label>
+          <label class="calc__opt"><input type="checkbox" id="calcUnexempt"><span>有失败用例，但 <code>exemption</code> 下<b>没有</b>对应资料</span></label>
+          <label class="calc__opt"><input type="checkbox" id="calcNoScreen"><span>这台设备<b>不带屏</b>（申请资料「是否带屏」= 不带屏）</span></label>
+          <div class="calc__out" id="calcOut"></div>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--text-3)">勾几下就知道：<b>无屏不会因为缺 DCTS / VALIDATOR 而阻塞</b>，但「没跑到」和「未豁免」一定会。</p>
+    </section>
+
     <!-- 1 -->
     <section id="quickstart">
-      <h2><span class="num">1</span>五分钟跑通一次提交</h2>
+      <h2><span class="num"></span>五分钟跑通一次提交</h2>
       <p class="lead">第一次用照这个顺序走，后面每台设备重复第 3、4 步即可。</p>
       <ol class="steps">
         <li><b>登录</b>：输入平台账号密码，验证通过后凭据会加密保存在本机，下次自动登录。</li>
@@ -240,10 +376,10 @@
 
     <!-- 2 -->
     <section id="env">
-      <h2><span class="num">2</span>环境与目录约定</h2>
+      <h2><span class="num"></span>环境与目录约定</h2>
       <p class="lead">应用不自己造目录结构，它按已有约定去找文件。搞清这四样东西，后面每一步都顺。</p>
 
-      <h3>2.1 一个设备目录长这样</h3>
+      <h3>3.1 一个设备目录长这样</h3>
       <pre><code>DHong\DH-76BC-HL4\
 ├─ OpenHarmony兼容性申请资料.xlsx      ← 产品定义 + 「是否带屏」，决定跑哪套最小测试集
 ├─ report\                             ← XTS 报告归档（应用写入）
@@ -258,11 +394,11 @@
 │  └─ HATS\&lt;模块&gt;\&lt;模块&gt;.txt
 └─ 固件包.zip / .7z                     ← 型号-8位日期命名</code></pre>
 
-      <h3>2.2 测试用例根目录</h3>
+      <h3>3.2 测试用例根目录</h3>
       <p>「测试用例路径」指向 <code>xts-acts</code> 套件根，里面要有 <code>ssts\</code> <code>hats\</code> <code>dcts\</code> <code>acts\</code> 四个子目录，例如 <code>D:\ohos\XTS6.1\testcase</code>。</p>
       <p>选到套件目录（如 <code>…\testcase\ssts</code>）也能用，应用会自动归一到套件根，并在结果里回显归一结果。</p>
 
-      <h3>2.3 标准最小测试集</h3>
+      <h3>3.3 标准最小测试集</h3>
       <p>最小测试集目录要和 <code>testcase</code> 同级，应用按屏类型自动挑：</p>
       <table>
         <thead><tr><th>目录</th><th>用途</th><th>ACTS</th><th>HATS</th><th>DCTS</th></tr></thead>
@@ -272,7 +408,7 @@
         </tbody>
       </table>
 
-      <h3>2.4 运行依赖</h3>
+      <h3>3.4 运行依赖</h3>
       <div class="grid2">
         <div class="card">
           <div class="card__title">HDC</div>
@@ -291,7 +427,7 @@
 
     <!-- 3 -->
     <section id="login">
-      <h2><span class="num">3</span>登录与账号</h2>
+      <h2><span class="num"></span>登录与账号</h2>
       <p class="lead">应用启动先过登录门，登录成功才会出现左侧导航。</p>
       <ul>
         <li>账号密码存在本机用户数据目录，用 <b>0600 / DPAPI</b> 加密，不上传、不写日志。</li>
@@ -302,7 +438,7 @@
 
     <!-- 4 -->
     <section id="devices">
-      <h2><span class="num">4</span>测试盒子与设备</h2>
+      <h2><span class="num"></span>测试盒子与设备</h2>
       <p class="lead">DCTS 需要测试盒子与设备组网；其他套件只需要被测设备在线。</p>
       <ol class="steps">
         <li><b>接上设备与盒子</b>，确认 <code>hdc list targets</code> 能看到它们。</li>
@@ -316,14 +452,14 @@
 
     <!-- 5 -->
     <section id="materials">
-      <h2><span class="num">5</span>评测资料提交</h2>
+      <h2><span class="num"></span>评测资料提交</h2>
       <p class="lead">把设备目录里的工作簿、报告、固件交给平台，走完五步停在「未提交」。</p>
-      <h3>5.1 填两个东西</h3>
+      <h3>6.1 填两个东西</h3>
       <ul>
         <li><b>账号 / 密码</b>：沿用登录凭据，密码留空表示用已保存的。</li>
         <li><b>设备目录</b>：点「选择文件夹」。也支持选一个<b>批量父目录</b>，应用会递归找下面的设备工作簿逐台处理。</li>
       </ul>
-      <h3>5.2 预检与提交</h3>
+      <h3>6.2 预检与提交</h3>
       <ol class="steps">
         <li><b>评测资料预检</b>：只读检查，不写平台。会核对工作簿字段、报告路径、自检表、固件包是否齐。</li>
         <li><b>评测资料提交</b>：真实浏览器操作，依次保存「联系人 → 产品定义 → 软件定义 → 报告上传 → 样机寄送」，最后停在「未提交」。</li>
@@ -336,19 +472,19 @@
 
     <!-- 6 -->
     <section id="test">
-      <h2><span class="num">6</span>XTS 自动测试</h2>
+      <h2><span class="num"></span>XTS 自动测试</h2>
       <p class="lead">串行跑 SSTS → HATS（含 HDF 增量）→ DCTS（仅带屏）→ ACTS，失败自动补测，报告按轮归档。</p>
 
-      <h3>6.1 两个路径</h3>
+      <h3>7.1 两个路径</h3>
       <ul>
-        <li><b>测试用例路径</b>：<code>…\XTS6.1\testcase</code>（套件根，见 2.2）。</li>
+        <li><b>测试用例路径</b>：<code>…\XTS6.1\testcase</code>（套件根，见 3.2）。</li>
         <li><b>设备目录</b>：报告归档根，报告写到 <code>&lt;设备目录&gt;\report\&lt;套件&gt;\report-N</code>。</li>
       </ul>
 
-      <h3>6.2 有屏 / 无屏不用你选</h3>
+      <h3>7.2 有屏 / 无屏不用你选</h3>
       <p>应用读设备目录下 <code>OpenHarmony兼容性申请资料.xlsx</code> 的「是否带屏」决定方案，并据此选用对应最小测试集。目录里没有工作簿时（例如填的是批量父目录）才退回用 <code>hidumper</code> 探测，结果里会写清来源。</p>
 
-      <h3>6.3 套件怎么排</h3>
+      <h3>7.3 套件怎么排</h3>
       <table>
         <thead><tr><th>套件</th><th>模式</th><th>说明</th></tr></thead>
         <tbody>
@@ -359,10 +495,10 @@
         </tbody>
       </table>
 
-      <h3>6.4 增量补测</h3>
+      <h3>7.4 增量补测</h3>
       <p>每轮结束后按 <code>summary_report.xml</code> 判卷：失败模块、以及<b>没跑完</b>或被标记 unavailable 的模块，自动进入下一轮补测，最多补 2 轮。仍然失败的模块会标红，提示你去走豁免。</p>
 
-      <h3>6.5 停止与后台</h3>
+      <h3>7.5 停止与后台</h3>
       <ul>
         <li>点「停止测试」会写一个 STOP 标记：当前 xdevice 被结束，<b>已完成模块的报告照样归档</b>，然后状态回到空闲。</li>
         <li>关窗口只是收进托盘，测试继续跑；从托盘菜单「显示主界面」可以回去看进度。</li>
@@ -375,7 +511,7 @@
 
     <!-- 7 -->
     <section id="mirror">
-      <h2><span class="num">7</span>镜像固件上传</h2>
+      <h2><span class="num"></span>镜像固件上传</h2>
       <p class="lead">把固件传到平台「企业空间 → 镜像管理」，评测资料提交时会按文件名选用它。</p>
       <ul>
         <li><b>固件包路径</b>：可以选单个 <code>.zip</code> / <code>.7z</code>，也可以选包含固件的目录。</li>
@@ -389,17 +525,17 @@
 
     <!-- 8 -->
     <section id="waiver">
-      <h2><span class="num">8</span>豁免资料</h2>
+      <h2><span class="num"></span>豁免资料</h2>
       <p class="lead">把 <code>exemption</code> 目录下的报告解析成平台草稿，一条失败项一份草稿。</p>
 
-      <h3>8.1 三步</h3>
+      <h3>9.1 三步</h3>
       <ol class="steps">
         <li><b>识别目录</b>：只本地解析，不联网。列出每条资料的分类（ACTS / ACTS-Validator / HATS / DCTS / SSTS）、模块、用例数、平台提交路径，以及资料有什么问题。</li>
         <li><b>豁免资料预检</b>：真浏览器登录平台，只查重、不建草稿。</li>
         <li><b>保存豁免草稿</b>：逐条创建草稿并保存，<b>不提交</b>。</li>
       </ol>
 
-      <h3>8.2 资料怎么放</h3>
+      <h3>9.2 资料怎么放</h3>
       <pre><code>exemption\
 ├─ Acts\&lt;模块&gt;\&lt;套件&gt;.txt              ← 文件名 = 套件名
 │  ├─ evidence\…                        ← 佐证（报告摘录 / hilog）
@@ -412,7 +548,7 @@
         <li>用例行支持三种写法：<code>- 模块#套件#用例</code>、<code>模块#套件#用例</code>、<code>失败用例：模块#套件#用例</code>。</li>
       </ul>
 
-      <h3>8.3 两条会拦住你的校验</h3>
+      <h3>9.3 两条会拦住你的校验</h3>
       <div class="note note--danger">
         <p><b>测评编号必须与设备资料一致。</b>应用会读设备目录下 <code>OpenHarmony兼容性批量结果_*\result.json</code> 记录的编号；和你在页面填的不一致会直接拒跑，避免把 A 设备的草稿挂到 B 设备的认证记录下。</p>
       </div>
@@ -423,7 +559,7 @@
 
     <!-- 9 -->
     <section id="review">
-      <h2><span class="num">9</span>报告复审</h2>
+      <h2><span class="num"></span>报告复审</h2>
       <p class="lead">提交前的最后一道自检：套件跑全没有、失败项有没有豁免。</p>
       <ol class="steps">
         <li>选设备目录（要含工作簿、<code>report\</code>、<code>exemption\</code>），点「开始复审」。</li>
@@ -433,7 +569,7 @@
         <li>看「没跑到的模块」：最小集里有、所有轮次都没有结果的模块，需要重跑测试。</li>
       </ol>
 
-      <h3>9.1 判定口径</h3>
+      <h3>10.1 判定口径</h3>
       <table>
         <thead><tr><th>项</th><th>怎么算</th></tr></thead>
         <tbody>
@@ -452,16 +588,16 @@
 
     <!-- 10 -->
     <section id="settings">
-      <h2><span class="num">10</span>设置、托盘与单实例</h2>
-      <h3>10.1 外观</h3>
+      <h2><span class="num"></span>设置、托盘与单实例</h2>
+      <h3>11.1 外观</h3>
       <p>深色 / 浅色 / 跟随系统三选一，切换即时生效并记住选择。</p>
-      <h3>10.2 关闭 = 收进托盘</h3>
+      <h3>11.2 关闭 = 收进托盘</h3>
       <ul>
         <li>点窗口右上角关闭，窗口隐藏、<b>进程继续跑</b>，正在进行的测试与上传不受影响。</li>
         <li>托盘图标单击 / 双击，或右键菜单「显示主界面」，可以把窗口叫回来。</li>
         <li>真正退出：托盘右键菜单 →「退出」。</li>
       </ul>
-      <h3>10.3 单实例</h3>
+      <h3>11.3 单实例</h3>
       <p>任何时刻只允许一个进程。窗口收进托盘后再双击 exe，只会把已有窗口叫出来，不会起第二个服务。</p>
       <div class="note note--warn">
         如果托盘里找不到图标，可能被系统折叠了：点任务栏的 <span class="kbd">^</span> 展开隐藏图标区域。
@@ -470,8 +606,8 @@
 
     <!-- 11 -->
     <section id="reports">
-      <h2><span class="num">11</span>报告归档与判卷口径</h2>
-      <h3>11.1 归档位置</h3>
+      <h2><span class="num"></span>报告归档与判卷口径</h2>
+      <h3>12.1 归档位置</h3>
       <p>每轮一份，编号递增不覆盖：</p>
       <pre><code>&lt;设备目录&gt;\report\ACTS\report-1\
                      report-2\      ← 补测轮
@@ -480,7 +616,7 @@
         result\*.xml        每个模块的用例明细
         log\                模块日志</code></pre>
 
-      <h3>11.2 各套件的报告格式本来就不一样</h3>
+      <h3>12.2 各套件的报告格式本来就不一样</h3>
       <p>这是上游套件包自带的差异，<b>不是 bug</b>：</p>
       <table>
         <thead><tr><th>套件</th><th>xdevice 版本</th><th>报告长相</th></tr></thead>
@@ -491,7 +627,7 @@
       </table>
       <p>应用在跑某个套件前会核对该套件 <code>tools\</code> 里的 xdevice 版本指纹，不一致就整套重装，避免用错版本跑出错误格式的报告。</p>
 
-      <h3>11.3 判卷</h3>
+      <h3>12.3 判卷</h3>
       <ul>
         <li>以 <code>summary_report.xml</code> 为准：<code>failures &gt; 0</code> 或整模块 <code>ignored</code> 都算失败。</li>
         <li>跑了一半中断的轮次，会用已完成模块的 <code>result\*.xml</code> 合成一份完整 summary 再归档，保证补测能接着跑。</li>
@@ -501,7 +637,7 @@
 
     <!-- 12 -->
     <section id="faq">
-      <h2><span class="num">12</span>常见问题</h2>
+      <h2><span class="num"></span>常见问题</h2>
 
       <h3>跑测试报「已有任务正在执行」</h3>
       <p>同一时间只允许一个测试任务。等当前任务结束，或先点「停止测试」。资料任务（评测资料 / 豁免）与测试任务也互斥。</p>
@@ -514,7 +650,7 @@
       </ul>
 
       <h3>SSTS 报告跟别的套件长得不一样</h3>
-      <p>正常，见 11.2。SSTS 用旧版 xdevice，本来就是 details/passes 那套 HTML。</p>
+      <p>正常，见 12.2。SSTS 用旧版 xdevice，本来就是 details/passes 那套 HTML。</p>
 
       <h3>DCTS 全部 SoftBus 模块失败</h3>
       <p>先确认资源安装是否真的成功：设备上应存在 <code>/data/local/tmp/dsoftbusTest</code>、<code>/data/local/tmp/socketdsoftbusTest</code>、<code>/data/test.wav</code>，且 <code>softbus_trans_permission.json</code> 里有 <code>com.communication.demo</code> 条目。缺任一项说明 <code>dcts_resource.bat</code> 没跑完。</p>
@@ -539,6 +675,37 @@
       XTS 报告上传 · v1.0.1 · 本教程随应用发布；发现页面与实际不符，请以应用界面为准并反馈。
     </div>
   </main>
+</div>
+
+
+<div class="tour-overlay" id="tourOverlay" role="dialog" aria-modal="true" aria-label="交互式引导">
+  <div class="tour-window">
+    <div class="tour-titlebar"><span><i></i><i></i><i></i></span><span>OpenHarmony XTS 报告上传 · 模拟界面</span></div>
+    <div class="tour-body">
+      <aside class="mock-side">
+        <div class="mock-brand"><span class="logo">XT</span><span>XTS 报告上传</span></div>
+        <nav class="mock-nav" id="mockNav"></nav>
+      </aside>
+      <div class="mock-main" id="mockMain"></div>
+    </div>
+    <div class="tour-foot">
+      <span id="tourCounter">第 1 / 15 步</span>
+      <span class="tour-dots" id="tourDots"></span>
+      <span id="tourEscHint">Esc 退出</span>
+    </div>
+  </div>
+</div>
+<div class="tour-spot" id="tourSpot" hidden></div>
+<div class="tour-tip" id="tourTip" hidden>
+  <div class="tour-tip__step" id="tipStep"></div>
+  <div class="tour-tip__title" id="tipTitle"></div>
+  <div class="tour-tip__body" id="tipBody"></div>
+  <div class="tour-tip__hint" id="tipHint"></div>
+  <div class="tour-tip__actions">
+    <button type="button" id="tipPrev">上一步</button>
+    <button type="button" id="tipNext" class="primary">下一步</button>
+    <button type="button" id="tipClose">退出</button>
+  </div>
 </div>
 
 <script>
@@ -579,6 +746,321 @@
     window.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
   })();
+</script>
+
+<script>
+/* —————————— 交互式引导 —————————— */
+(function () {
+  var NAV = ['概览', '测试盒子', '评测资料', 'XTS 自动测试', '镜像固件上传', '豁免资料', '报告复审', '设置'];
+
+  var field = function (label, value, pickLabel) {
+    return '<div class="mock-field"><label>' + label + '</label><div class="mock-input"><span>' + value + '</span>' +
+      (pickLabel ? '<span class="pick">' + pickLabel + '</span>' : '') + '</div></div>';
+  };
+
+  var SCREENS = {
+    login: {
+      nav: null,
+      html:
+        '<div class="mock-panel" style="max-width:420px;margin:26px auto 0;text-align:center">' +
+          '<div class="mock-h" style="text-align:left">登录 OpenHarmony 兼容性平台</div>' +
+          '<div data-tour="login-card" style="margin-top:10px;display:grid;gap:8px;text-align:left">' +
+            '<div class="mock-input"><span>ingeeksu@qq.com</span></div>' +
+            '<div class="mock-input"><span>••••••••</span></div>' +
+          '</div>' +
+          '<div class="mock-btns" style="justify-content:center"><button class="mock-btn primary" data-tour="login-btn">登录</button></div>' +
+          '<p style="font-size:11.5px;color:var(--text-3);margin:10px 0 0">凭据加密存在本机，下次自动登录</p>' +
+        '</div>'
+    },
+    materials: {
+      nav: '评测资料',
+      html:
+        '<div class="mock-panel">' +
+          '<div class="mock-h">申请账号与设备目录</div>' +
+          field('账号', 'ingeeksu@qq.com') +
+          field('密码', '已保存密码，留空则沿用') +
+          '<div data-tour="mat-dir">' + field('设备目录（或批量父目录）', 'D:\\ohos\\XTS6.1\\DHong\\DH-76BC-HL4', '选择文件夹') + '</div>' +
+          '<div class="mock-row" style="margin-top:8px"><span class="mock-tag">已识别工作簿</span><span class="mock-tag">豁免资料：exemption</span><span class="mock-tag">固件包：1 个</span></div>' +
+        '</div>' +
+        '<div class="mock-panel">' +
+          '<div class="mock-row" style="justify-content:space-between"><b style="font-size:12px;color:var(--text-2)">未提交草稿</b>' +
+            '<span data-tour="mat-actions" class="mock-btns" style="margin:0"><button class="mock-btn">评测资料预检</button><button class="mock-btn primary">评测资料提交</button></span>' +
+          '</div>' +
+          '<div class="mock-list"><div class="mock-line"><span>资料保存五步：联系人 → 产品定义 → 软件定义 → 报告 → 样机</span><span class="mock-tag ok">停在未提交</span></div></div>' +
+        '</div>'
+    },
+    test: {
+      nav: 'XTS 自动测试',
+      html:
+        '<div class="mock-cols">' +
+          '<div style="display:grid;gap:10px;align-content:start">' +
+            '<div class="mock-panel">' +
+              '<div class="mock-h">测试配置</div>' +
+              '<div data-tour="test-paths">' + field('测试用例路径', 'D:\\ohos\\XTS6.1\\testcase', '选择文件夹') +
+              field('设备目录（报告归档根）', 'D:\\ohos\\XTS6.1\\DHong\\DH-76BC-HL4', '选择文件夹') + '</div>' +
+            '</div>' +
+            '<div class="mock-panel">' +
+              '<div class="mock-row" style="justify-content:space-between"><span class="mock-h" style="margin:0">被测设备</span><span class="mock-tag">空闲 2 台 · 已选 1 台</span></div>' +
+              '<div class="mock-cards" data-tour="test-devices">' +
+                '<div class="mock-card on"><b>设备 · USB</b>ea010e32…5c00<span class="mock-tag ok">已选</span></div>' +
+                '<div class="mock-card"><b>设备 · USB</b>15010042…890d<span class="mock-tag">空闲</span></div>' +
+                '<div class="mock-card"><b>测试盒子</b>37010065…7b00<span class="mock-tag">已排除</span></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="mock-panel"><div class="mock-h" style="margin:0">执行</div>' +
+              '<div class="mock-btns" data-tour="test-suites"><button class="mock-btn">SSTS</button><button class="mock-btn">HATS</button><button class="mock-btn">DCTS</button><button class="mock-btn">ACTS</button><button class="mock-btn primary">开始测试（4 个套件）</button></div>' +
+              '<p style="font-size:11px;color:var(--text-3);margin:8px 0 0">有屏/无屏由申请资料决定，自动选最小测试集</p>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:grid;gap:10px;align-content:start" data-tour="test-side">' +
+            '<div class="mock-panel"><div class="mock-h">流水线</div>' +
+              '<div class="mock-list"><div class="mock-line"><span>1 SSTS</span><span class="mock-tag ok">完成</span></div>' +
+              '<div class="mock-line"><span>2 HATS</span><span class="mock-tag">运行中</span></div>' +
+              '<div class="mock-line"><span>3 DCTS</span><span class="mock-tag">待执行</span></div>' +
+              '<div class="mock-line"><span>4 ACTS</span><span class="mock-tag">待执行</span></div></div>' +
+              '<div class="mock-bar"><i></i></div>' +
+            '</div>' +
+            '<div class="mock-panel"><div class="mock-h">轮次记录</div>' +
+              '<div class="mock-list"><div class="mock-line"><span>ACTS 第 1 轮</span><span class="mock-tag warn">2 模块失败</span></div>' +
+              '<div class="mock-line"><span>自动补测</span><span class="mock-tag ok">report-2</span></div></div>' +
+            '</div>' +
+          '</div>' +
+        '</div>'
+    },
+    mirror: {
+      nav: '镜像固件上传',
+      html:
+        '<div class="mock-panel">' +
+          '<div class="mock-h">固件包</div>' +
+          '<div data-tour="mirror-upload">' + field('固件包路径', 'D:\\ohos\\XTS6.1\\DHong\\DH-76BC-HL4\\DH-76BC-HL4-20261118.zip', '选择文件…') + '</div>' +
+          '<div class="mock-btns"><button class="mock-btn primary">上传到平台</button></div>' +
+        '</div>' +
+        '<div class="mock-panel"><div class="mock-h">平台回执</div>' +
+          '<div class="mock-list"><div class="mock-line"><span>DH-76BC-HL4-20261118.zip</span><span class="mock-tag ok">已存在，跳过</span></div>' +
+          '<div class="mock-line"><span>企业空间 → 镜像管理</span><span class="mock-tag">同名复用</span></div></div>' +
+        '</div>'
+    },
+    waiver: {
+      nav: '豁免资料',
+      html:
+        '<div class="mock-panel">' +
+          '<div class="mock-h">豁免目录</div>' +
+          '<div data-tour="waiver-scan">' + field('豁免资料目录', 'D:\\ohos\\XTS6.1\\DHong\\DH-76BC-HL4\\exemption', '选择文件夹') +
+            '<div class="mock-btns"><button class="mock-btn">识别目录</button></div></div>' +
+        '</div>' +
+        '<div class="mock-panel"><div class="mock-h">识别结果（本地解析，不联网）</div>' +
+          '<div class="mock-list">' +
+            '<div class="mock-line"><span>Acts · ActsAceCArkUI22Test</span><span class="mock-tag ok">就绪</span></div>' +
+            '<div class="mock-line"><span>ActsValidator · ActsArkUITest</span><span class="mock-tag ok">就绪</span></div>' +
+            '<div class="mock-line"><span>HATS · HatsHdfInputTest</span><span class="mock-tag ok">模块级</span></div>' +
+          '</div>' +
+          '<div class="mock-btns" data-tour="waiver-actions"><button class="mock-btn">豁免资料预检</button><button class="mock-btn primary">保存豁免草稿</button></div>' +
+        '</div>'
+    },
+    review: {
+      nav: '报告复审',
+      html:
+        '<div class="mock-cols">' +
+          '<div style="display:grid;gap:10px;align-content:start">' +
+            '<div class="mock-panel"><div class="mock-h">复审对象</div>' +
+              '<div data-tour="review-run">' + field('设备目录', 'D:\\ohos\\XTS6.1\\DHong\\DH-76BC-HL4', '选择文件夹') + '</div>' +
+            '</div>' +
+            '<div class="mock-panel" data-tour="review-verdict"><div class="mock-row" style="justify-content:space-between"><b style="font-size:12px;color:var(--text-2)">结论</b><span class="mock-tag ok">5/5 套件通过</span></div>' +
+              '<div class="mock-list">' +
+                '<div class="mock-line"><span>ACTS　期望 981 · 实跑 981</span><span class="mock-tag ok">16 失败全豁免</span></div>' +
+                '<div class="mock-line"><span>HATS　期望 178 · 实跑 178</span><span class="mock-tag ok">85 失败全豁免</span></div>' +
+                '<div class="mock-line"><span>DCTS　期望 13 · 实跑 13</span><span class="mock-tag ok">通过</span></div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:grid;gap:10px;align-content:start" data-tour="review-side">' +
+            '<div class="mock-panel"><div class="mock-h">未通过模块</div>' +
+              '<div class="mock-list">' +
+                '<div class="mock-line"><span>ActsAceCArkUI22Test</span><span class="mock-tag ok">已豁免</span></div>' +
+                '<div class="mock-line"><span>HatsHdfInputTest</span><span class="mock-tag ok">已豁免</span></div>' +
+                '<div class="mock-line"><span>ReliabilityTest</span><span class="mock-tag warn">未豁免</span></div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>'
+    },
+    settings: {
+      nav: '设置',
+      html:
+        '<div class="mock-panel"><div class="mock-h">外观</div>' +
+          '<div class="mock-cards" data-tour="settings-theme">' +
+            '<div class="mock-card on"><b>深色</b>当前</div>' +
+            '<div class="mock-card"><b>浅色</b></div>' +
+            '<div class="mock-card"><b>跟随系统</b></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="mock-panel"><div class="mock-h">关于</div>' +
+          '<p style="font-size:11.5px;color:var(--text-3);margin:0">XTS 报告上传 · v1.0.1　关闭窗口会收进托盘，测试继续在后台跑</p>' +
+        '</div>'
+    }
+  };
+
+  var TOUR = [
+    { screen: 'login', target: 'login-card', title: '先登录平台账号', body: '应用启动先过登录门。账号密码验证通过后加密存在本机，之后不用反复输。', hint: '平台要验证码时，应用会停下并截图，不会绕过。' },
+    { screen: 'login', target: 'login-btn', title: '登录成功后才有左侧导航', body: '左边 8 个页面就是全部功能；底部可以「退出账号」，只清会话不清密码。' },
+    { screen: 'materials', target: 'mat-dir', title: '第一步：选设备目录', body: '点输入框右边的「选择文件夹」，用系统对话框选。别手填——框是只读的。', hint: '也支持选批量父目录，应用会递归找下面每台设备。' },
+    { screen: 'materials', target: 'mat-actions', title: '预检 → 提交，停在「未提交」', body: '先点「评测资料预检」只读检查，再点「评测资料提交」走完五步保存草稿。', hint: '应用永远不点平台上的「确认提交」，那一步必须你手动点。' },
+    { screen: 'test', target: 'test-paths', title: '两个路径别搞混', body: '上面是「测试用例路径」（套件根，如 …\\XTS6.1\\testcase）；下面是「设备目录」，报告会归档到它下面的 report\\<套件>\\report-N。' },
+    { screen: 'test', target: 'test-devices', title: '只列空闲设备，盒子自动排除', body: '绿点是已选设备，被别的任务占用的不会出现。测试盒子会在配网时用，但不会被当成被测设备跑测试。' },
+    { screen: 'test', target: 'test-suites', title: '勾套件，点开始测试', body: '串行跑 SSTS → HATS（含 HDF 增量轮）→ DCTS（仅带屏）→ ACTS。有屏/无屏由申请资料决定，不用你选。' },
+    { screen: 'test', target: 'test-side', title: '右边看进度与轮次', body: '流水线显示每个套件状态；轮次记录里失败的模块会自动补测，最多 2 轮，仍失败的标红提示走豁免。' },
+    { screen: 'mirror', target: 'mirror-upload', title: '固件先传再提交资料', body: '选固件包或含固件的目录，上传到平台「企业空间 → 镜像管理」。同名固件会跳过并显示原上传时间。' },
+    { screen: 'waiver', target: 'waiver-scan', title: '豁免：先识别目录', body: '点「选择文件夹」选 exemption 目录，再点「识别目录」——这一步只在本地解析，不联网。', hint: '分类由目录结构识别（Acts / ActsValidator / HATS / DCTS / SSTS），不用手填。' },
+    { screen: 'waiver', target: 'waiver-actions', title: '预检 → 保存草稿', body: '先「豁免资料预检」查重，再「保存豁免草稿」逐条建草稿。同样不提交。', hint: '测评编号必须与设备资料一致，不一致会直接拒跑，避免挂错认证记录。' },
+    { screen: 'review', target: 'review-run', title: '最后一步：报告复审', body: '选同一个设备目录，点「开始复审」。它会按最小测试集核对 report 是否跑全、失败项有没有豁免。' },
+    { screen: 'review', target: 'review-verdict', title: '看结论与套件明细', body: '「可以提交」表示无阻塞。每行给出期望模块数、实跑、用例数、失败数、缺失、有豁免、未豁免。', hint: '灰字「提示（不影响结论）」不是错误，例如用例数与参考口径差几条。' },
+    { screen: 'review', target: 'review-side', title: '右栏列出未通过的模块', body: '未豁免的排最前，并给出豁免目录路径。补完资料回这里重跑复审即可。' },
+    { screen: 'settings', target: 'settings-theme', title: '外观与托盘行为', body: '深色/浅色/跟随系统即时切换。关窗口只是收进托盘，测试继续跑；真正退出走托盘菜单「退出」。', hint: '任何时刻只允许一个进程；再双击 exe 只会把已有窗口叫出来。' }
+  ];
+
+  var KEY = 'xts-guide-tour-v1';
+  var state = { i: 0, done: [] };
+  try { var raw = localStorage.getItem(KEY); if (raw) { var parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.done)) state.done = parsed.done; else if (parsed && parsed.done) state.done = parsed.done; } } catch (e) {}
+
+  var overlay = document.getElementById('tourOverlay');
+  var mockNav = document.getElementById('mockNav');
+  var mockMain = document.getElementById('mockMain');
+  var spot = document.getElementById('tourSpot');
+  var tip = document.getElementById('tourTip');
+  var elCounter = document.getElementById('tourCounter');
+  var elDots = document.getElementById('tourDots');
+  var elProgressTxt = document.getElementById('tourProgressTxt');
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify({ done: state.done })); } catch (e) {} }
+
+  function renderProgress() {
+    if (!elProgressTxt) return;
+    var total = TOUR.length;
+    var done = state.done.length;
+    elProgressTxt.innerHTML = done >= total
+      ? '<b>已完成全部 ' + total + ' 步</b>'
+      : '已看 ' + done + ' / ' + total + ' 步';
+  }
+
+  function paint(screenKey) {
+    var screen = SCREENS[screenKey];
+    mockNav.innerHTML = NAV.map(function (name) {
+      return '<span class="' + (name === screen.nav ? 'on' : '') + '">' + name + '</span>';
+    }).join('');
+    mockMain.innerHTML = screen.html;
+  }
+
+  function place(index) {
+    var step = TOUR[index];
+    var el = mockMain.querySelector('[data-tour="' + step.target + '"]');
+    var win = document.querySelector('.tour-window');
+    var winRect = win.getBoundingClientRect();
+    var pad = 6;
+    var rect = el ? el.getBoundingClientRect() : {
+      left: winRect.left + winRect.width / 2 - 120,
+      top: winRect.top + winRect.height / 2 - 40,
+      width: 240, height: 80, bottom: winRect.top + winRect.height / 2 + 40
+    };
+
+    spot.hidden = false;
+    spot.style.left = (rect.left - pad) + 'px';
+    spot.style.top = (rect.top - pad) + 'px';
+    spot.style.width = (rect.width + pad * 2) + 'px';
+    spot.style.height = (rect.height + pad * 2) + 'px';
+
+    document.getElementById('tipStep').textContent = '第 ' + (index + 1) + ' / ' + TOUR.length + ' 步';
+    document.getElementById('tipTitle').textContent = step.title;
+    document.getElementById('tipBody').innerHTML = step.body;
+    document.getElementById('tipHint').textContent = step.hint || '';
+    document.getElementById('tipHint').style.display = step.hint ? '' : 'none';
+    document.getElementById('tipPrev').disabled = index === 0;
+    document.getElementById('tipNext').textContent = index === TOUR.length - 1 ? '完成' : '下一步';
+
+    tip.hidden = false;
+    // 先量一次高度再摆位置
+    var tipRect = tip.getBoundingClientRect();
+    var gap = 14;
+    var below = rect.bottom + gap + tipRect.height < window.innerHeight - 8;
+    var top = below ? rect.bottom + gap : Math.max(8, rect.top - gap - tipRect.height);
+    var left = Math.min(Math.max(8, rect.left), window.innerWidth - tipRect.width - 8);
+    tip.style.top = top + 'px';
+    tip.style.left = left + 'px';
+
+    elCounter.textContent = '第 ' + (index + 1) + ' / ' + TOUR.length + ' 步';
+    elDots.innerHTML = TOUR.map(function (_, j) {
+      return '<i class="' + (j <= index ? 'on' : '') + '"></i>';
+    }).join('');
+  }
+
+  function show(index) {
+    state.i = Math.max(0, Math.min(TOUR.length - 1, index));
+    var step = TOUR[state.i];
+    paint(step.screen);
+    requestAnimationFrame(function () { place(state.i); });
+    if (state.done.indexOf(state.i) < 0) { state.done.push(state.i); save(); }
+    renderProgress();
+  }
+
+  function open() {
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    show(0);
+  }
+  function close() {
+    overlay.classList.remove('open');
+    spot.hidden = true;
+    tip.hidden = true;
+    document.body.style.overflow = '';
+    renderProgress();
+  }
+
+  document.getElementById('tourStart').addEventListener('click', open);
+  document.getElementById('tourReset').addEventListener('click', function () {
+    state.done = [];
+    save();
+    renderProgress();
+  });
+  document.getElementById('tipPrev').addEventListener('click', function () { show(state.i - 1); });
+  document.getElementById('tipNext').addEventListener('click', function () {
+    if (state.i >= TOUR.length - 1) { close(); return; }
+    show(state.i + 1);
+  });
+  document.getElementById('tipClose').addEventListener('click', close);
+  overlay.addEventListener('click', function (event) { if (event.target === overlay) close(); });
+  document.addEventListener('keydown', function (event) {
+    if (!overlay.classList.contains('open')) return;
+    if (event.key === 'Escape') { close(); }
+    else if (event.key === 'ArrowRight') { if (state.i < TOUR.length - 1) show(state.i + 1); }
+    else if (event.key === 'ArrowLeft') { show(state.i - 1); }
+  });
+  window.addEventListener('resize', function () { if (overlay.classList.contains('open')) place(state.i); });
+
+  renderProgress();
+
+  /* —— 复审结论试算器 —— */
+  function calc() {
+    var missing = document.getElementById('calcMissing').checked;
+    var unexempt = document.getElementById('calcUnexempt').checked;
+    var noScreen = document.getElementById('calcNoScreen').checked;
+    var out = document.getElementById('calcOut');
+    var lines = [];
+    if (missing) lines.push('有模块没跑到 → 阻塞（重跑测试补上）');
+    if (unexempt) lines.push('有失败项没豁免 → 阻塞（补 exemption 资料）');
+    if (noScreen) lines.push('无屏：DCTS 与 ACTS-VALIDATOR 不检，不算缺');
+    if (!missing && !unexempt) {
+      out.className = 'calc__out ok';
+      out.innerHTML = '结论：可以提交' + (lines.length ? '<small>' + lines.join('<br>') + '</small>' : '');
+    } else {
+      out.className = 'calc__out bad';
+      out.innerHTML = '结论：还有阻塞项' + '<small>' + lines.join('<br>') + '</small>';
+    }
+  }
+  ['calcMissing', 'calcUnexempt', 'calcNoScreen'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('change', calc);
+  });
+  if (document.getElementById('calcOut')) calc();
+})();
 </script>
 </body>
 </html>
