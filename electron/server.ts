@@ -1,8 +1,9 @@
 import http from 'node:http'
-import { BrowserWindow, dialog } from 'electron'
+import { BrowserWindow, app, dialog, shell } from 'electron'
 import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join, normalize, win32 } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { derivePaths } from './derive-paths.js'
 import { parseMirrorProgressLine, parseMirrorResultLine, type MirrorResult } from './mirror-progress.js'
 import {
@@ -36,7 +37,10 @@ import { CredentialVault } from './vault.js'
  * 渲染进程据此实现同样的交互行为。
  */
 
-export const API_PREFIX = '/api/xts-reporter'
+export // out/main/server.js → 上两级是应用根（开发时是仓库根，打包后是 resources/app）。
+const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+const API_PREFIX = '/api/xts-reporter'
 
 const DEFAULT_TESTCASES_PATH = 'D:\\ohos\\XTS6.1\\testcase'
 const DEFAULT_TEST_BOX_SN = '370100654d4d43202010000071dd7b00'
@@ -664,6 +668,28 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
       updateState({ kind: 'waiver', phase: 'idle', finishedAt: new Date().toISOString(), ok: false, message, errors: [message], progress: { percent: 100, stage: '已停止', detail: message } })
       sendJson(res, 400, { ok: false, message, errors: [message] })
     }
+  }
+
+  /** 应用自身信息（版本号、教程路径），设置页「关于」用。 */
+  function handleAppInfo(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (req.method !== 'GET') return sendJson(res, 405, { ok: false, message: '只支持 GET。' })
+    const guide = join(APP_ROOT, 'docs', '使用教程.html')
+    sendJson(res, 200, { ok: true, version: app.getVersion(), guidePath: existsSync(guide) ? guide : '' })
+  }
+
+  /**
+   * 打开内置使用教程（docs/使用教程.html）。用户要求用外部浏览器打开（2026-11-26），
+   * 所以走 shell.openPath 交给系统默认浏览器，不在应用内新开窗口。
+   */
+  async function handleOpenGuide(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: '只支持 POST。' })
+    const file = join(APP_ROOT, 'docs', '使用教程.html')
+    if (!existsSync(file)) {
+      return sendJson(res, 200, { ok: false, message: `找不到教程文件：${file}` })
+    }
+    const error = await shell.openPath(file)
+    if (error) return sendJson(res, 200, { ok: false, message: `打开教程失败：${error}` })
+    sendJson(res, 200, { ok: true, path: file })
   }
 
   /** 报告复审：核对设备目录下 report/ 与 exemption/ 是否满足提交要求（scripts/report_review.mjs）。 */
@@ -1322,6 +1348,8 @@ async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerRespo
     [`${API_PREFIX}/device/connect`, handleDeviceConnect],
     [`${API_PREFIX}/dialog/pick`, handlePickPath],
     [`${API_PREFIX}/report/review`, handleReportReview],
+    [`${API_PREFIX}/guide/open`, handleOpenGuide],
+    [`${API_PREFIX}/app/info`, handleAppInfo],
     [`${API_PREFIX}/auth/status`, handleAuthStatus],
     [`${API_PREFIX}/auth/login`, handleAuthLogin],
     [`${API_PREFIX}/auth/logout`, handleAuthLogout],

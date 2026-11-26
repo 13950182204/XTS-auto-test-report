@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { request } from '../api.js'
 import { Panel, StatusLine } from '../components.js'
 import { getThemePreference, setThemePreference, type ThemePreference } from '../theme.js'
 
@@ -14,9 +15,17 @@ export function SettingsPage(): ReactElement {
   const [theme, setTheme] = useState<ThemePreference>(getThemePreference())
   const [note, setNote] = useState('')
   const [noteTone, setNoteTone] = useState<'ok' | 'error'>('ok')
+  const [guideBusy, setGuideBusy] = useState(false)
+  const [version, setVersion] = useState('')
 
   useEffect(() => {
     setTheme(getThemePreference())
+    let active = true
+    void (async () => {
+      const response = await request<{ ok: boolean; version?: string }>('app/info', 'GET')
+      if (active && response.ok && response.version) setVersion(response.version)
+    })()
+    return () => { active = false }
   }, [])
 
   function changeTheme(preference: ThemePreference): void {
@@ -24,6 +33,19 @@ export function SettingsPage(): ReactElement {
     setTheme(preference)
     setNoteTone('ok')
     setNote(`外观已切换为${THEME_OPTIONS.find((option) => option.id === preference)?.label ?? preference}。`)
+  }
+
+  async function openGuide(): Promise<void> {
+    setGuideBusy(true)
+    const response = await request<{ ok: boolean; message?: string }>('guide/open', 'POST')
+    setGuideBusy(false)
+    if (response.ok) {
+      setNoteTone('ok')
+      setNote('已用系统默认浏览器打开使用教程。')
+      return
+    }
+    setNoteTone('error')
+    setNote(String(response.message ?? '打开教程失败。'))
   }
 
   return (
@@ -49,8 +71,19 @@ export function SettingsPage(): ReactElement {
             </div>
           </Panel>
 
+          <Panel title="帮助">
+            <div className="row-top">
+              <span className="name">完整使用教程</span>
+              <span className="pct push-right">带交互引导的图文说明</span>
+            </div>
+            <p className="path">从登录到报告复审的完整流程：每个按钮在哪、判定口径怎么算、常见问题怎么排。</p>
+            <div className="row-actions">
+              <button className="btn" disabled={guideBusy} onClick={() => void openGuide()}>{guideBusy ? '正在打开…' : '打开教程'}</button>
+            </div>
+          </Panel>
+
           <Panel title="关于">
-            <p className="path">{`XTS 报告上传 · v0.3.0`}</p>
+            <p className="path">{`XTS 报告上传 · v${version || '—'}`}</p>
             <p className="path">凭据保存在本机用户数据目录（0600 / DPAPI 加密）；业务脚本与 DSH 插件同源。</p>
           </Panel>
 
