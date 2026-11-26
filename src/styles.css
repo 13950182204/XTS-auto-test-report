@@ -1,7 +1,7 @@
 /* ===== xts-reporter-app 设计系统（方向 B · 双栏工作台） ===== */
 :root{
   --mono:ui-monospace,Consolas,monospace;
-  --radius:10px;--radius-sm:8px;--sidebar:216px;
+  --radius:12px;--radius-sm:9px;--sidebar:216px;
   --accent-grad:linear-gradient(135deg,var(--business),var(--primary));
   /* 间距 / 字号刻度：布局一律引用，不再散落硬编码 */
   --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:24px;--s-6:32px;
@@ -12,7 +12,7 @@
 /* 深色（默认） */
 :root,:root[data-theme='dark']{
   --bg:#141519;--bg-2:#1c1d24;--bg-3:#22242c;
-  --border:rgba(255,255,255,.16);--border-soft:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.13);--border-soft:rgba(255,255,255,.07);
   --soft:rgba(255,255,255,.05);--hover:rgba(255,255,255,.08);
   --text:#e6e8ee;--text-2:#b4b8c4;--text-3:#9297a7;
   --primary:#4f7cf0;--primary-hover:#3f6ae0;--on-primary:#fff;
@@ -22,7 +22,7 @@
 /* 浅色 */
 :root[data-theme='light']{
   --bg:#f2f4f8;--bg-2:#ffffff;--bg-3:#eef1f6;
-  --border:rgba(15,23,42,.18);--border-soft:rgba(15,23,42,.09);
+  --border:rgba(15,23,42,.15);--border-soft:rgba(15,23,42,.08);
   --soft:rgba(15,23,42,.04);--hover:rgba(15,23,42,.06);
   --text:#1f2329;--text-2:#475569;--text-3:#8892a0;
   --primary:#2563eb;--primary-hover:#1d4ed8;--on-primary:#fff;
@@ -30,7 +30,7 @@
   --card-shadow:0 6px 18px rgba(15,23,42,.08);
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:13px;line-height:1.55}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:13.5px;line-height:1.6}
 #root{height:100vh}
 /* ===== 应用壳：侧栏 + 固定视口工作台（整页不滚，滚动落在栏内） ===== */
 .app{display:grid;grid-template-columns:var(--sidebar) 1fr;height:100vh}
@@ -44,7 +44,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Mic
 .sidebar__nav{display:grid;gap:4px}
 .sidebar__item{display:flex;align-items:center;gap:10px;padding:9px 12px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-2);font:inherit;font-size:13px;font-weight:500;cursor:pointer;text-align:left;transition:background-color .15s ease,color .15s ease}
 .sidebar__item:hover{background:var(--hover);color:var(--text)}
-.sidebar__item.active{background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--text)}
+.sidebar__item.active{background:color-mix(in srgb,var(--primary) 15%,transparent);color:var(--primary);font-weight:650}
 .sidebar__item.active .ico{color:var(--primary)}
 .sidebar__item .ico{width:18px;text-align:center;flex:none}
 .sidebar__foot{margin-top:auto;padding:10px 8px 0;border-top:1px solid var(--border-soft);font-size:11px;color:var(--text-3);display:grid;gap:3px}
@@ -56,13 +56,13 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Mic
 /* ===== 一行页头：标题 + 内联说明 + 右侧主动作 ===== */
 .page-head--bar{display:flex;align-items:center;gap:var(--s-3);min-width:0}
 .page-head--bar h1{margin:0;font-size:var(--fs-5);font-weight:650;display:flex;align-items:center;gap:10px;flex:none}
-.page-head--bar h1::before{content:'';width:9px;height:9px;border-radius:999px;background:var(--accent-grad);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
+.page-head--bar h1::before{content:'';width:12px;height:12px;border-radius:4px;background:var(--accent-grad);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 16%,transparent)}
 .page-head__meta{font-size:var(--fs-1);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .page-head__actions{margin-left:auto;display:flex;gap:var(--s-2);flex:none}
 /* 旧版两行页头（登录页等保留处） */
 .page-head{display:grid;gap:4px}
 .page-head h1{margin:0;font-size:var(--fs-5);font-weight:650;display:flex;align-items:center;gap:10px}
-.page-head h1::before{content:'';width:9px;height:9px;border-radius:999px;background:var(--accent-grad);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
+.page-head h1::before{content:'';width:12px;height:12px;border-radius:4px;background:var(--accent-grad);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 16%,transparent)}
 .page-head p{margin:0;font-size:12.5px;color:var(--text-2)}
 /* ===== 双栏工作台：左主列 + 右状态列（窄窗回落单列） ===== */
 .workbench{display:grid;grid-template-columns:minmax(0,1fr) var(--col-side);gap:var(--s-4);min-height:0}
@@ -84,22 +84,22 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Mic
 .taskbar__meta{color:var(--text-3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .taskbar .bar{flex:1;min-width:160px}
 /* ===== 通用件 ===== */
-.panel{display:grid;gap:10px;padding:14px 16px;border:1px solid var(--border-soft);border-radius:var(--radius);background:var(--bg-2);min-width:0;align-content:start}
+.panel{display:grid;gap:12px;padding:16px 18px;border:1px solid var(--border-soft);border-radius:var(--radius);background:var(--bg-2);min-width:0;align-content:start}
 /* 填充型面板：头部固定、内容区占满剩余高度（右状态列用） */
 .panel--fill{min-height:0;grid-template-rows:auto minmax(0,1fr);align-content:stretch}
-.panel-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px}
-.panel-title{font-size:13px;font-weight:650;display:inline-flex;align-items:center;gap:7px}
-.panel-title::before{content:'';width:6px;height:6px;border-radius:2px;background:var(--business);opacity:.85}
+.panel-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding-bottom:10px;border-bottom:1px solid var(--border-soft)}
+.panel-title{font-size:13.5px;font-weight:660;display:inline-flex;align-items:center;gap:8px}
+.panel-title::before{content:'';width:7px;height:7px;border-radius:2.5px;background:var(--business)}
 .panel-meta{font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .panel-head__actions{margin-left:auto;display:inline-flex;gap:6px;flex:none}
 /* 面板内滚动区：长列表不拉长页面 */
-.panel__scroll{overflow-y:auto;min-height:0;display:grid;gap:7px;padding-right:2px;align-content:start}
+.panel__scroll{overflow-y:auto;min-height:0;display:grid;gap:8px;padding-right:2px;align-content:start}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px 14px;align-items:start}
 .field{display:grid;gap:5px;min-width:0}
 .field--wide{grid-column:1/-1}
 .label{font-size:12px;font-weight:550;color:var(--text-2)}
-.hint{font-size:11px;line-height:1.55;color:var(--text-3);overflow-wrap:anywhere}
-.input{width:100%;min-height:32px;padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--soft);color:inherit;font:inherit;font-size:12.5px;transition:border-color .15s ease}
+.hint{font-size:11.5px;line-height:1.6;color:var(--text-3);overflow-wrap:anywhere}
+.input{width:100%;min-height:34px;padding:6px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--soft);color:inherit;font:inherit;font-size:12.5px;transition:border-color .15s ease}
 .input::placeholder{color:var(--text-3)}
 .input:hover:not(:disabled){border-color:color-mix(in srgb,var(--text) 26%,transparent)}
 .input:focus-visible{outline:2px solid var(--business);outline-offset:1px;background:transparent}
@@ -115,7 +115,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Mic
 .hint--error{color:var(--danger)}
 textarea.input{min-height:86px;resize:vertical;line-height:1.7}
 .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.btn{height:31px;padding:0 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text);font:inherit;font-size:12.5px;font-weight:550;cursor:pointer;transition:background-color .15s ease,border-color .15s ease,transform .06s ease}
+.btn{height:33px;padding:0 15px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:var(--text);font:inherit;font-size:12.5px;font-weight:550;cursor:pointer;transition:background-color .15s ease,border-color .15s ease,transform .06s ease}
 .btn:hover:not(:disabled){background:var(--hover);border-color:color-mix(in srgb,var(--text) 26%,transparent)}
 .btn:active:not(:disabled){transform:translateY(1px)}
 .btn:focus-visible{outline:2px solid var(--business);outline-offset:2px}
@@ -127,9 +127,9 @@ textarea.input{min-height:86px;resize:vertical;line-height:1.7}
 .btn--small{height:24px;padding:0 10px;font-size:11.5px;border-radius:6px}
 .note{margin:0;font-size:11.5px;line-height:1.6;color:var(--text-3);overflow-wrap:anywhere}
 /* ===== 列表与行（紧凑：单行名 + 单行 detail；长文本截断） ===== */
-.list{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .list-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;padding:5px 12px;border-radius:var(--radius-sm);background:var(--bg-3);font-size:10.5px;font-weight:600;color:var(--text-3);letter-spacing:.04em}
-.row{display:grid;gap:3px;padding:8px 12px;border:1px solid var(--border-soft);border-left:3px solid var(--border);border-radius:var(--radius-sm);background:var(--soft);transition:border-color .15s ease;min-width:0}
+.row{display:grid;gap:4px;padding:10px 13px;border:1px solid var(--border-soft);border-left:3px solid var(--border);border-radius:var(--radius-sm);background:var(--soft);transition:border-color .15s ease;min-width:0}
 .row:hover{border-color:color-mix(in srgb,var(--text) 24%,transparent)}
 .row--blocked{border-left-color:var(--danger)}
 .row--ready{border-left-color:var(--success)}
@@ -147,7 +147,7 @@ textarea.input{min-height:86px;resize:vertical;line-height:1.7}
 .row-title{font-size:12.5px;font-weight:550}
 .mono-line{font-family:var(--mono);font-size:11px;color:var(--text-3);display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.chip{display:inline-flex;align-items:center;gap:5px;height:19px;padding:0 8px;border-radius:999px;background:rgba(127,127,127,.14);font-size:10.5px;font-weight:650;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 9px;border:1px solid color-mix(in srgb,currentColor 26%,transparent);border-radius:999px;background:rgba(127,127,127,.10);font-size:10.5px;font-weight:650;white-space:nowrap}
 .chip::before{content:'';width:5px;height:5px;border-radius:999px;background:currentColor;opacity:.75;flex:none}
 .chip--ok{color:var(--success);background:color-mix(in srgb,var(--success) 13%,transparent)}
 .chip--warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
