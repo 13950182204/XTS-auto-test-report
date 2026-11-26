@@ -535,21 +535,30 @@ export async function readScreenFromWorkbook(deviceDir) {
     if (typeof value === 'object' && 'result' in value) return String(value.result ?? '').trim();
     return String(value).trim();
   };
+  // 「不带屏」里含「带屏」，必须先判否定再判肯定（2026-11-26 实测 CDO-RK3568 被误判成有屏）。
+  const isNoValue = (text) => /不带屏|无屏|^否$/.test(text);
+  const isYesValue = (text) => (/不带屏|无屏|^否$/.test(text) ? false : /带屏|^是$/.test(text));
   const sheets = [];
   for (const sheet of workbook.worksheets) {
     let certified = false;
-    let screen = '';
+    const screenValues = [];
     sheet.eachRow((row) => {
       const label = cellText(row.getCell(1));
-      if (/测评编号/.test(label) && cellText(row.getCell(2))) certified = true;
+      // 合并单元格会把标签复制到整片区域（实测 `是否带屏 | 是否带屏 | 不带屏…`），
+      // 所以只收「不是标签、不是表头字段」的值，否则「是否带屏」会被当成「带屏」。
+      const certifiedValue = cellText(row.getCell(2));
+      if (/测评编号/.test(label) && certifiedValue && !/测评编号/.test(certifiedValue)) certified = true;
       if (!/是否带屏/.test(label)) return;
-      for (let col = 2; col <= Math.max(row.cellCount, 2); col += 1) {
+      for (let col = 1; col <= Math.max(row.cellCount, 1); col += 1) {
         const text = cellText(row.getCell(col));
         if (!text) continue;
-        if (/不带屏|无屏|^否$/.test(text)) screen = 'no';
-        else if (/带屏|^是$/.test(text)) screen = screen || 'yes';
+        if (/是否带屏|测评编号|最近处理时间/.test(text)) continue;
+        screenValues.push(text);
       }
     });
+    let screen = '';
+    if (screenValues.some(isYesValue)) screen = 'yes';
+    else if (screenValues.some(isNoValue)) screen = 'no';
     sheets.push({ name: sheet.name, certified, screen });
   }
   const withScreen = sheets.filter((item) => item.screen);

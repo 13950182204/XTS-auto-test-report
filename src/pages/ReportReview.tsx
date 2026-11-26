@@ -73,7 +73,10 @@ export function ReportReviewPage(): ReactElement {
   const verdict = review?.verdict ?? ''
   const summary = review?.summary ?? {}
   const screenLabel = review?.screen === 'yes' ? '有屏' : review?.screen === 'no' ? '无屏' : '未知'
-  const blocked = suites.filter((item) => item.ok !== true)
+  const failedEntries = suites.flatMap((suite) => (suite.failedItems ?? []).map((item) => ({ suite, item })))
+  const missingEntries = suites.flatMap((suite) => (suite.missingModules ?? []).map((module) => ({ suite, module })))
+  const failedCount = failedEntries.length
+  const missingCount = missingEntries.length
 
   return (
     <>
@@ -118,7 +121,9 @@ export function ReportReviewPage(): ReactElement {
                         <Chip tone={suite.ok ? 'ok' : 'warn'}>{suite.label ?? suite.key}</Chip>
                         <span className="name">{(num(suite.expectedModules) ?? 0) > 0
                           ? `期望 ${num(suite.expectedModules)} 模块 · 实跑 ${num(suite.ranModules) ?? 0} · 用例 ${num(suite.tests) ?? 0}`
-                          : `期望 ${num(suite.referenceTests) ?? 0} 用例（参考口径）· 实跑 ${num(suite.ranModules) ?? 0} 模块 · 用例 ${num(suite.tests) ?? 0}`}</span>
+                          : (num(suite.referenceTests) ?? 0) > 0
+                            ? `期望 ${num(suite.referenceTests)} 用例（参考口径）· 实跑 ${num(suite.ranModules) ?? 0} 模块 · 用例 ${num(suite.tests) ?? 0}`
+                            : `无最小集清单 · 实跑 ${num(suite.ranModules) ?? 0} 模块 · 用例 ${num(suite.tests) ?? 0}`}</span>
                         <span className="pct push-right">{`失败 ${num(suite.failures) ?? 0}`}</span>
                       </div>
                       <Bar percent={suite.ok ? 100 : 55} danger={!suite.ok} label={`${suite.label} 复审`} />
@@ -129,26 +134,44 @@ export function ReportReviewPage(): ReactElement {
                 </ul>
               </Panel>
 
-              {blocked.length > 0 ? (
-                <Panel title="阻塞项" meta={`${blocked.length} 个套件`}>
+              <Panel title="未通过模块" meta={failedCount > 0 ? `${failedCount} 个模块` : '无'} scroll scrollMax={280}>
+                {failedEntries.length === 0 ? (
+                  <p className="empty">没有失败模块。</p>
+                ) : (
                   <ul className="list">
-                    {blocked.flatMap((suite) => [
-                      ...(suite.unexemptedItems ?? []).map((item) => ({ key: `${suite.key}-u-${item.module}`, label: suite.label ?? suite.key, item, kind: '未豁免' })),
-                      ...(suite.missingModules ?? []).slice(0, 20).map((module) => ({ key: `${suite.key}-m-${module}`, label: suite.label ?? suite.key, item: { module } as ReviewItem, kind: '没跑到' })),
-                    ]).map(({ key, label, item, kind }) => (
-                      <li className="row row--blocked" key={key}>
+                    {failedEntries.map(({ suite, item }) => (
+                      <li className={`row ${item.waiverPath ? '' : 'row--blocked'}`} key={`${suite.key}-${item.module}`}>
                         <div className="row-top">
-                          <Chip tone="warn">{kind}</Chip>
-                          <span className="name" title={item.module}>{`${label} · ${item.module ?? ''}`}</span>
-                          {item.caseCount ? <span className="pct push-right">{`${item.caseCount} 条失败用例`}</span> : null}
+                          <Chip tone={item.waiverPath ? 'ok' : 'warn'}>{item.waiverPath ? '已豁免' : '未豁免'}</Chip>
+                          <Chip tone="neutral">{suite.label ?? suite.key}</Chip>
+                          <span className="name" title={item.module}>{item.module ?? ''}</span>
+                          <span className="pct push-right">{`${item.caseCount ?? item.failureCount ?? 0} 条失败`}</span>
                         </div>
                         {item.testsuites?.length ? <p className="path">{`测试套：${item.testsuites.join('、')}`}</p> : null}
                         {item.cases?.length ? <p className="path" title={item.cases.join(', ')}>{`用例：${item.cases.slice(0, 6).join('、')}${item.cases.length > 6 ? ' …' : ''}`}</p> : null}
+                        <p className="path" title={item.waiverPath}>{item.waiverPath ? `豁免：${item.waiverPath}` : '缺豁免资料（需在 exemption/ 下补）'}</p>
                       </li>
                     ))}
                   </ul>
-                </Panel>
-              ) : null}
+                )}
+              </Panel>
+
+              <Panel title="没跑到的模块" meta={missingCount > 0 ? `${missingCount} 个` : '无'} scroll scrollMax={220}>
+                {missingEntries.length === 0 ? (
+                  <p className="empty">最小测试集里的模块都跑到了。</p>
+                ) : (
+                  <ul className="list">
+                    {missingEntries.map(({ suite, module }) => (
+                      <li className="row row--blocked" key={`${suite.key}-m-${module}`}>
+                        <div className="row-top">
+                          <Chip tone="warn">{suite.label ?? suite.key}</Chip>
+                          <span className="name" title={module}>{module}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Panel>
             </>
           ) : (
             <Panel title="复审结果">
@@ -158,23 +181,14 @@ export function ReportReviewPage(): ReactElement {
         </div>
 
         <div className="workbench__side">
-          <Panel title="已豁免的失败项" meta={review ? `${suites.reduce((sum, item) => sum + (item.exemptedItems?.length ?? 0), 0)} 项` : undefined} fill scroll>
-            {review && suites.some((item) => (item.exemptedItems?.length ?? 0) > 0) ? (
-              <ul className="list">
-                {suites.flatMap((suite) => (suite.exemptedItems ?? []).map((item) => (
-                  <li className="row" key={`${suite.key}-${item.module}`}>
-                    <div className="row-top">
-                      <Chip tone="ok">{suite.label ?? suite.key}</Chip>
-                      <span className="name" title={item.module}>{item.module ?? ''}</span>
-                      <span className="pct push-right">{`${item.caseCount ?? 0} 条`}</span>
-                    </div>
-                    <p className="path" title={item.waiverPath}>{item.waiverPath ? `豁免：${item.waiverPath}` : '无豁免资料'}</p>
-                  </li>
-                )))}
-              </ul>
-            ) : (
-              <p className="empty">豁免覆盖情况会显示在这里。</p>
-            )}
+          <Panel title="复审口径" fill scroll>
+            <ul className="list">
+              <li className="row"><div className="row-top"><span className="name">期望模块</span><span className="pct push-right">最小测试集_有屏/无屏</span></div><p className="path">按申请资料「是否带屏」选对应清单，跑全才算过</p></li>
+              <li className="row"><div className="row-top"><span className="name">多轮聚合</span><span className="pct push-right">取并集</span></div><p className="path">增量补测只含失败子集，已跑模块按所有轮次并集算</p></li>
+              <li className="row"><div className="row-top"><span className="name">真失败</span><span className="pct push-right">result=false 且 status=run</span></div><p className="path">status=disable/skip 是被忽略用例，不算失败</p></li>
+              <li className="row"><div className="row-top"><span className="name">豁免覆盖</span><span className="pct push-right">exemption/&lt;分类&gt;/&lt;模块或套件&gt;</span></div><p className="path">失败模块或测试套在对应目录下存在即算已豁免</p></li>
+              <li className="row"><div className="row-top"><span className="name">无屏方案</span><span className="pct push-right">跳过 DCTS / VALIDATOR</span></div><p className="path">这两项没有无屏最小集，不检也不算缺</p></li>
+            </ul>
           </Panel>
         </div>
       </div>

@@ -80,27 +80,32 @@ async function readScreenFromWorkbook(deviceDir) {
     return String(value).trim();
   };
 
+  // 判定顺序很重要：「不带屏」里含「带屏」，必须先判否定再判肯定。
+  const isNoValue = (text) => /不带屏|无屏|^否$/.test(text);
+  const isYesValue = (text) => /^不带屏$|无屏|^否$/.test(text) ? false : (/带屏|^是$/.test(text));
+
   const sheetInfo = [];
   for (const sheet of workbook.worksheets) {
     let certified = false;
-    let screen = '';
-    const screenRows = [];
+    const screenValues = [];
     sheet.eachRow((row) => {
       const label = cellText(row.getCell(1));
-      if (/测评编号/.test(label) && cellText(row.getCell(2))) certified = true;
+      // 合并单元格会把标签复制到整片区域（实测 `是否带屏 | 是否带屏 | 不带屏…`），
+      // 所以只收「不是标签、不是表头字段」的值，否则「是否带屏」会被当成「带屏」。
+      const certifiedValue = cellText(row.getCell(2));
+      if (/测评编号/.test(label) && certifiedValue && !/测评编号/.test(certifiedValue)) certified = true;
       if (!/是否带屏/.test(label)) return;
-      const values = [];
-      for (let col = 2; col <= Math.max(row.cellCount, 2); col += 1) {
+      for (let col = 1; col <= Math.max(row.cellCount, 1); col += 1) {
         const text = cellText(row.getCell(col));
-        if (text) values.push(text);
-      }
-      screenRows.push({ label, values });
-      for (const text of values) {
-        if (/不带屏|无屏|^否$/.test(text)) screen = 'no';
-        else if (/带屏|^是$/.test(text)) screen = screen || 'yes';
+        if (!text) continue;
+        if (/是否带屏|测评编号|最近处理时间/.test(text)) continue;
+        screenValues.push(text);
       }
     });
-    sheetInfo.push({ name: sheet.name, certified, screen, screenRows });
+    let screen = '';
+    if (screenValues.some(isYesValue)) screen = 'yes';
+    else if (screenValues.some(isNoValue)) screen = 'no';
+    sheetInfo.push({ name: sheet.name, certified, screen, screenValues });
   }
 
   const withScreen = sheetInfo.filter((item) => item.screen);
@@ -109,9 +114,7 @@ async function readScreenFromWorkbook(deviceDir) {
     const anySheet = sheetInfo.map((item) => item.name).join('/') || '无工作表';
     return { screen: '', source: file, note: `申请资料里「是否带屏」为空（工作表：${anySheet}）` };
   }
-  // 发行版表有两列「设备N是否带屏」：任一为带屏即按有屏方案跑（更严格的那套）。
-  const hasScreen = hit.screen === 'yes' || hit.screenRows.some((row) => row.values.some((v) => /带屏|^是$/.test(v)));
-  return { screen: hasScreen ? 'yes' : 'no', source: `${path.basename(file)}#${hit.name}`, note: '' };
+  return { screen: hit.screen, source: `${path.basename(file)}#${hit.name}`, note: '' };
 }
 
 /** 最小测试集目录：testcase 根的同级目录，按有屏/无屏挑。 */
@@ -222,10 +225,10 @@ async function reviewSuite({ suite, deviceDir, minSetDir, screen }) {
     ok: false,
   };
 
-  // 无屏方案没有 DCTS 最小集，不跑也不算缺。
-  if (suite.key === 'dcts' && screen === 'no') {
+  // 无屏方案不含 DCTS 与 ACTS-VALIDATOR（用户 2026-11-26）：没有最小集、也不要求抽查，跳过不算缺。
+  if (screen === 'no' && (suite.key === 'dcts' || suite.key === 'validator')) {
     result.ok = true;
-    result.problems.push('无屏方案不含 DCTS');
+    result.problems.push(suite.key === 'dcts' ? '无屏方案不含 DCTS' : '无屏方案不含 ACTS-VALIDATOR');
     return result;
   }
 
