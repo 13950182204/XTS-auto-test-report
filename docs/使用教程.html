@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark light" />
+<title>XTS 报告上传 · 完整使用教程</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-soft: #16181f;
+    --bg-card: #1a1d25;
+    --border: #262a35;
+    --text: #e6e8ee;
+    --text-2: #a7adbd;
+    --text-3: #767d8d;
+    --brand: #5b8def;
+    --brand-soft: #1d2740;
+    --ok: #3fb96f;
+    --warn: #d9a23b;
+    --danger: #e05656;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Courier New", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7fa;
+      --bg-soft: #ffffff;
+      --bg-card: #ffffff;
+      --border: #e2e5ec;
+      --text: #1b1f27;
+      --text-2: #4d5566;
+      --text-3: #7a8294;
+      --brand: #2f6fe4;
+      --brand-soft: #eaf1fe;
+      --ok: #178f4c;
+      --warn: #a86a00;
+      --danger: #c53030;
+    }
+  }
+  html[data-theme="light"] { --bg:#f6f7fa; --bg-soft:#fff; --bg-card:#fff; --border:#e2e5ec; --text:#1b1f27; --text-2:#4d5566; --text-3:#7a8294; --brand:#2f6fe4; --brand-soft:#eaf1fe; --ok:#178f4c; --warn:#a86a00; --danger:#c53030; }
+  html[data-theme="dark"] { --bg:#0f1115; --bg-soft:#16181f; --bg-card:#1a1d25; --border:#262a35; --text:#e6e8ee; --text-2:#a7adbd; --text-3:#767d8d; --brand:#5b8def; --brand-soft:#1d2740; --ok:#3fb96f; --warn:#d9a23b; --danger:#e05656; }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.75 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .layout { display: grid; grid-template-columns: 268px minmax(0, 1fr); min-height: 100vh; }
+
+  /* —— 左侧目录 —— */
+  .toc {
+    position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow-y: auto;
+    background: var(--bg-soft);
+    border-right: 1px solid var(--border);
+    padding: 22px 16px 40px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 16px; }
+  .brand__logo {
+    width: 34px; height: 34px; border-radius: 10px; flex: 0 0 auto;
+    background: var(--brand); color: #fff;
+    display: grid; place-items: center; font-weight: 700; font-size: 14px; letter-spacing: .5px;
+  }
+  .brand__text b { display: block; font-size: 14px; }
+  .brand__text span { font-size: 12px; color: var(--text-3); }
+  .toc h2 { font-size: 11px; letter-spacing: .12em; color: var(--text-3); text-transform: uppercase; margin: 18px 8px 8px; font-weight: 600; }
+  .toc { counter-reset: toc; }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc li { margin: 1px 0; }
+  .toc a {
+    display: flex; gap: 8px; align-items: baseline;
+    padding: 6px 8px; border-radius: 8px;
+    color: var(--text-2); font-size: 13.5px;
+  }
+  .toc a::before { counter-increment: toc; content: counter(toc); color: var(--text-3); font-variant-numeric: tabular-nums; font-size: 12px; min-width: 14px; }
+  .toc a:hover { background: var(--brand-soft); color: var(--text); text-decoration: none; }
+  .toc a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .toc a.active::before { color: var(--brand); }
+
+  /* —— 正文 —— */
+  main { padding: 40px 48px 120px; max-width: 920px; }
+  .page-head { margin-bottom: 34px; }
+  .page-head h1 { font-size: 30px; margin: 0 0 8px; letter-spacing: -.3px; }
+  .page-head p { color: var(--text-2); margin: 0; }
+  .page-head .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; background: var(--bg-card); border: 1px solid var(--border); color: var(--text-2); }
+  .chip--brand { background: var(--brand-soft); border-color: transparent; color: var(--brand); }
+
+  section { scroll-margin-top: 24px; padding-top: 14px; margin-bottom: 46px; }
+  section > h2 {
+    font-size: 21px; margin: 0 0 6px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  section > h2 .num {
+    width: 26px; height: 26px; border-radius: 8px; flex: 0 0 auto;
+    background: var(--brand); color: #fff; font-size: 13px; font-weight: 700;
+    display: grid; place-items: center;
+  }
+  section > p.lead { color: var(--text-2); margin: 12px 0 18px; }
+  h3 { font-size: 16px; margin: 26px 0 10px; }
+  h4 { font-size: 14px; margin: 18px 0 8px; color: var(--text-2); letter-spacing: .02em; }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+
+  code { font-family: var(--mono); font-size: .9em; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+  pre { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 14px 0; }
+  pre code { background: none; border: none; padding: 0; font-size: 13px; line-height: 1.7; }
+
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin: 16px 0; }
+  .card > :first-child { margin-top: 0; }
+  .card > :last-child { margin-bottom: 0; }
+  .card__title { font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+
+  .note { border-left: 3px solid var(--brand); background: var(--brand-soft); border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 14px 0; }
+  .note--warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+  .note--danger { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .note b { color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-3); font-weight: 600; font-size: 12.5px; background: var(--bg-soft); }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; margin: 16px 0; }
+  .steps > li { counter-increment: step; position: relative; padding-left: 40px; margin: 14px 0; }
+  .steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 1px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--brand-soft); color: var(--brand);
+    font-size: 13px; font-weight: 700; display: grid; place-items: center;
+  }
+  .steps > li b { color: var(--text); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 16px 0; }
+  .kbd { font-family: var(--mono); font-size: 12px; background: var(--bg-soft); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; }
+
+  .topbar { position: fixed; right: 28px; top: 20px; display: flex; gap: 8px; z-index: 10; }
+  .topbar button {
+    font: inherit; font-size: 12.5px; cursor: pointer;
+    background: var(--bg-card); color: var(--text-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px;
+  }
+  .topbar button:hover { color: var(--text); border-color: var(--brand); }
+
+  .foot { color: var(--text-3); font-size: 12.5px; border-top: 1px solid var(--border); padding-top: 16px; margin-top: 40px; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 28px 20px 80px; }
+    .topbar { position: static; justify-content: flex-end; margin-bottom: 8px; }
+  }
+  @media print {
+    .toc, .topbar { display: none; }
+    .layout { grid-template-columns: 1fr; }
+    main { max-width: none; padding: 0; }
+    section { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <button id="themeBtn" type="button">跟随系统</button>
+  <button onclick="window.print()" type="button">打印 / 存成 PDF</button>
+</div>
+
+<div class="layout">
+  <nav class="toc" id="toc">
+    <div class="brand">
+      <div class="brand__logo">XT</div>
+      <div class="brand__text"><b>XTS 报告上传</b><span>完整使用教程</span></div>
+    </div>
+    <h2>开始</h2>
+    <ol>
+      <li><a href="#quickstart">五分钟跑通一次提交</a></li>
+      <li><a href="#env">环境与目录约定</a></li>
+      <li><a href="#login">登录与账号</a></li>
+    </ol>
+    <h2>日常流程</h2>
+    <ol>
+      <li><a href="#devices">测试盒子与设备</a></li>
+      <li><a href="#materials">评测资料提交</a></li>
+      <li><a href="#test">XTS 自动测试</a></li>
+      <li><a href="#mirror">镜像固件上传</a></li>
+      <li><a href="#waiver">豁免资料</a></li>
+      <li><a href="#review">报告复审</a></li>
+    </ol>
+    <h2>应用行为</h2>
+    <ol>
+      <li><a href="#settings">设置、托盘与单实例</a></li>
+      <li><a href="#reports">报告归档与判卷口径</a></li>
+      <li><a href="#faq">常见问题</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="page-head">
+      <h1>完整使用教程</h1>
+      <p>从一台设备目录出发，把「评测资料 → XTS 测试 → 豁免草稿 → 报告复审」走完。</p>
+      <div class="meta">
+        <span class="chip chip--brand">适用版本 v1.0.1</span>
+        <span class="chip">Windows 桌面版</span>
+        <span class="chip">只保存草稿，不代提交</span>
+        <span class="chip">最后更新 2026-11-26</span>
+      </div>
+    </header>
+
+    <div class="note">
+      <b>先记住三条规矩。</b>
+      <ol style="margin:8px 0 0;">
+        <li>应用只<b>保存草稿</b>，平台上的「确认提交」始终由你手动点。</li>
+        <li>所有路径都点右侧按钮用系统对话框选，不要手填（手填框是只读的）。</li>
+        <li>一台设备一个目录；有屏/无屏由该目录下的申请资料决定，不由你在界面上选。</li>
+      </ol>
+    </div>
+
+    <!-- 1 -->
+    <section id="quickstart">
+      <h2><span class="num">1</span>五分钟跑通一次提交</h2>
+      <p class="lead">第一次用照这个顺序走，后面每台设备重复第 3、4 步即可。</p>
+      <ol class="steps">
+        <li><b>登录</b>：输入平台账号密码，验证通过后凭据会加密保存在本机，下次自动登录。</li>
+        <li><b>选设备目录</b>：到「评测资料」页，点「选择文件夹」选到设备目录（例如 <code>D:\ohos\XTS6.1\DHong\DH-76BC-HL4</code>）。识别到工作簿后会带出豁免资料路径与固件包路径。</li>
+        <li><b>评测资料预检 → 提交</b>：预检会把产品定义、软件定义、报告、联系人逐项核对；通过后点「评测资料提交」，应用走完五步并停在「未提交」状态。</li>
+        <li><b>XTS 自动测试</b>：到「XTS 自动测试」页，选设备、勾要跑的套件，点「开始测试」。跑完报告自动归档到 <code>&lt;设备目录&gt;\report\&lt;套件&gt;\report-N</code>，失败的模块会自动补测。</li>
+        <li><b>豁免资料</b>：失败的模块要豁免时，到「豁免资料」页选 <code>exemption</code> 目录 → 「识别目录」看分类和提交路径 → 「豁免资料预检」→ 「保存豁免草稿」。同样只存草稿。</li>
+        <li><b>报告复审</b>：到「报告复审」页点「开始复审」，确认套件跑全、失败项都有豁免，看到「可以提交」再回平台手动提交。</li>
+      </ol>
+    </section>
+
+    <!-- 2 -->
+    <section id="env">
+      <h2><span class="num">2</span>环境与目录约定</h2>
+      <p class="lead">应用不自己造目录结构，它按已有约定去找文件。搞清这四样东西，后面每一步都顺。</p>
+
+      <h3>2.1 一个设备目录长这样</h3>
+      <pre><code>DHong\DH-76BC-HL4\
+├─ OpenHarmony兼容性申请资料.xlsx      ← 产品定义 + 「是否带屏」，决定跑哪套最小测试集
+├─ report\                             ← XTS 报告归档（应用写入）
+│  ├─ ACTS\report-1\ …
+│  ├─ ACTS-VALIDATOR\report-1\
+│  ├─ HATS\report-1\
+│  ├─ DCTS\report-1\
+│  └─ SSTS\report-1\
+├─ exemption\                          ← 豁免资料（你准备，应用只读）
+│  ├─ Acts\&lt;模块&gt;\&lt;套件&gt;.txt
+│  ├─ ActsValidator\&lt;套件&gt;\&lt;套件&gt;.txt
+│  └─ HATS\&lt;模块&gt;\&lt;模块&gt;.txt
+└─ 固件包.zip / .7z                     ← 型号-8位日期命名</code></pre>
+
+      <h3>2.2 测试用例根目录</h3>
+      <p>「测试用例路径」指向 <code>xts-acts</code> 套件根，里面要有 <code>ssts\</code> <code>hats\</code> <code>dcts\</code> <code>acts\</code> 四个子目录，例如 <code>D:\ohos\XTS6.1\testcase</code>。</p>
+      <p>选到套件目录（如 <code>…\testcase\ssts</code>）也能用，应用会自动归一到套件根，并在结果里回显归一结果。</p>
+
+      <h3>2.3 标准最小测试集</h3>
+      <p>最小测试集目录要和 <code>testcase</code> 同级，应用按屏类型自动挑：</p>
+      <table>
+        <thead><tr><th>目录</th><th>用途</th><th>ACTS</th><th>HATS</th><th>DCTS</th></tr></thead>
+        <tbody>
+          <tr><td><code>标准最小测试集_有屏_支持JS应用_6.1LTS版本</code></td><td>带屏设备</td><td>981 模块</td><td>178 模块</td><td>13 模块</td></tr>
+          <tr><td><code>标准最小测试集_无屏_支持JS应用_6.1LTS版本</code></td><td>无屏设备</td><td>382 模块</td><td>167 模块</td><td>不适用</td></tr>
+        </tbody>
+      </table>
+
+      <h3>2.4 运行依赖</h3>
+      <div class="grid2">
+        <div class="card">
+          <div class="card__title">HDC</div>
+          <p>连设备用。默认从 <code>PATH</code> 找，也可以在环境变量 <code>OH_XTS_HDC</code> 指定完整路径。</p>
+        </div>
+        <div class="card">
+          <div class="card__title">Python + xdevice</div>
+          <p>跑测试用。应用在开跑前自检 <code>xdevice / ohos</code> 能否 import，缺了会按套件 <code>tools\</code> 下的离线包重装。</p>
+        </div>
+        <div class="card">
+          <div class="card__title">浏览器</div>
+          <p>评测资料、豁免草稿是真实浏览器操作，用系统已装的 Edge 或 Chrome，不需要额外下载。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section id="login">
+      <h2><span class="num">3</span>登录与账号</h2>
+      <p class="lead">应用启动先过登录门，登录成功才会出现左侧导航。</p>
+      <ul>
+        <li>账号密码存在本机用户数据目录，用 <b>0600 / DPAPI</b> 加密，不上传、不写日志。</li>
+        <li>支持多账号：登录页可切换已保存账号，侧边栏底部「退出账号」会清掉当前会话（不清密码）。</li>
+        <li>平台若弹验证码 / 短信验证，应用会直接停下并截图留证，<b>不会尝试绕过</b>；这时在浏览器里手工完成验证后再重试。</li>
+      </ul>
+    </section>
+
+    <!-- 4 -->
+    <section id="devices">
+      <h2><span class="num">4</span>测试盒子与设备</h2>
+      <p class="lead">DCTS 需要测试盒子与设备组网；其他套件只需要被测设备在线。</p>
+      <ol class="steps">
+        <li><b>接上设备与盒子</b>，确认 <code>hdc list targets</code> 能看到它们。</li>
+        <li><b>「测试盒子」页</b>：填盒子 SN 或 IP:Port，点「连接」/「配网」完成盒子侧配置。</li>
+        <li><b>确认设备空闲</b>：首页与测试页只列空闲设备；被占用的设备不会出现在可选项里。</li>
+      </ol>
+      <div class="note note--warn">
+        <b>盒子 SN 不是被测设备 SN。</b>应用会从设备列表里剔掉盒子，避免把盒子当被测设备跑测试。
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section id="materials">
+      <h2><span class="num">5</span>评测资料提交</h2>
+      <p class="lead">把设备目录里的工作簿、报告、固件交给平台，走完五步停在「未提交」。</p>
+      <h3>5.1 填两个东西</h3>
+      <ul>
+        <li><b>账号 / 密码</b>：沿用登录凭据，密码留空表示用已保存的。</li>
+        <li><b>设备目录</b>：点「选择文件夹」。也支持选一个<b>批量父目录</b>，应用会递归找下面的设备工作簿逐台处理。</li>
+      </ul>
+      <h3>5.2 预检与提交</h3>
+      <ol class="steps">
+        <li><b>评测资料预检</b>：只读检查，不写平台。会核对工作簿字段、报告路径、自检表、固件包是否齐。</li>
+        <li><b>评测资料提交</b>：真实浏览器操作，依次保存「联系人 → 产品定义 → 软件定义 → 报告上传 → 样机寄送」，最后停在「未提交」。</li>
+        <li><b>平台核验</b>：提交后可点「平台核验」回读草稿，确认字段落库正确。</li>
+      </ol>
+      <div class="note">
+        <b>应用永远不点「确认提交」。</b>草稿存好之后，剩下的确认动作请在平台上手动完成。
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section id="test">
+      <h2><span class="num">6</span>XTS 自动测试</h2>
+      <p class="lead">串行跑 SSTS → HATS（含 HDF 增量）→ DCTS（仅带屏）→ ACTS，失败自动补测，报告按轮归档。</p>
+
+      <h3>6.1 两个路径</h3>
+      <ul>
+        <li><b>测试用例路径</b>：<code>…\XTS6.1\testcase</code>（套件根，见 2.2）。</li>
+        <li><b>设备目录</b>：报告归档根，报告写到 <code>&lt;设备目录&gt;\report\&lt;套件&gt;\report-N</code>。</li>
+      </ul>
+
+      <h3>6.2 有屏 / 无屏不用你选</h3>
+      <p>应用读设备目录下 <code>OpenHarmony兼容性申请资料.xlsx</code> 的「是否带屏」决定方案，并据此选用对应最小测试集。目录里没有工作簿时（例如填的是批量父目录）才退回用 <code>hidumper</code> 探测，结果里会写清来源。</p>
+
+      <h3>6.3 套件怎么排</h3>
+      <table>
+        <thead><tr><th>套件</th><th>模式</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>SSTS</td><td>任务模式整跑</td><td>单机执行，取第一台 SN；约 23 模块 / 82 用例。</td></tr>
+          <tr><td>HATS</td><td>最小集清单</td><td>带屏 178 模块；其中 3 个 HDF 输入模块拆成「HATS-HDF 增量轮」单独跑、单独归档。</td></tr>
+          <tr><td>DCTS</td><td>最小集清单</td><td>仅带屏；跑前会先解绑盒子与被测设备的历史连接，再做 dcct 组网。</td></tr>
+          <tr><td>ACTS</td><td>最小集清单</td><td>带屏 981 模块 / 无屏 382 模块，模块间并行。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>6.4 增量补测</h3>
+      <p>每轮结束后按 <code>summary_report.xml</code> 判卷：失败模块、以及<b>没跑完</b>或被标记 unavailable 的模块，自动进入下一轮补测，最多补 2 轮。仍然失败的模块会标红，提示你去走豁免。</p>
+
+      <h3>6.5 停止与后台</h3>
+      <ul>
+        <li>点「停止测试」会写一个 STOP 标记：当前 xdevice 被结束，<b>已完成模块的报告照样归档</b>，然后状态回到空闲。</li>
+        <li>关窗口只是收进托盘，测试继续跑；从托盘菜单「显示主界面」可以回去看进度。</li>
+      </ul>
+
+      <div class="note note--warn">
+        <b>跑测试前请关掉别的自动化。</b>同一台设备同时跑两套 XTS 会互相抢 hdc 与屏幕，结果不可信。
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section id="mirror">
+      <h2><span class="num">7</span>镜像固件上传</h2>
+      <p class="lead">把固件传到平台「企业空间 → 镜像管理」，评测资料提交时会按文件名选用它。</p>
+      <ul>
+        <li><b>固件包路径</b>：可以选单个 <code>.zip</code> / <code>.7z</code>，也可以选包含固件的目录。</li>
+        <li>文件名建议 <b>型号-8 位日期</b>；目录里有多份固件时，文件名含 8 位日期的优先。</li>
+        <li>上传前会查重：平台已有同名固件就跳过并显示原上传时间；同名但未完成（&lt;100%）会沿用该记录续传。</li>
+      </ul>
+      <div class="note">
+        先传固件、再提交评测资料。资料提交第 4 步要按文件名在平台镜像库里选刚上传的那份。
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section id="waiver">
+      <h2><span class="num">8</span>豁免资料</h2>
+      <p class="lead">把 <code>exemption</code> 目录下的报告解析成平台草稿，一条失败项一份草稿。</p>
+
+      <h3>8.1 三步</h3>
+      <ol class="steps">
+        <li><b>识别目录</b>：只本地解析，不联网。列出每条资料的分类（ACTS / ACTS-Validator / HATS / DCTS / SSTS）、模块、用例数、平台提交路径，以及资料有什么问题。</li>
+        <li><b>豁免资料预检</b>：真浏览器登录平台，只查重、不建草稿。</li>
+        <li><b>保存豁免草稿</b>：逐条创建草稿并保存，<b>不提交</b>。</li>
+      </ol>
+
+      <h3>8.2 资料怎么放</h3>
+      <pre><code>exemption\
+├─ Acts\&lt;模块&gt;\&lt;套件&gt;.txt              ← 文件名 = 套件名
+│  ├─ evidence\…                        ← 佐证（报告摘录 / hilog）
+│  └─ &lt;套件&gt;-豁免材料.zip               ← 附件优先级 zip → pdf → txt
+├─ ActsValidator\&lt;套件&gt;\&lt;套件&gt;.txt
+└─ HATS\&lt;模块&gt;\&lt;模块&gt;.txt               ← 模块级豁免：写「模块级豁免：&lt;模块&gt; 全部用例」</code></pre>
+      <ul>
+        <li>分类由<b>目录结构</b>识别，不再手填。</li>
+        <li>报告正文分三节：<code>1. 失败用例</code> / <code>2. 失败原因</code> / <code>3. 申请豁免理由</code>。若第 3 节只是一句「附件说明：xxx.docx」，应用会改用第 2 节做豁免原因。</li>
+        <li>用例行支持三种写法：<code>- 模块#套件#用例</code>、<code>模块#套件#用例</code>、<code>失败用例：模块#套件#用例</code>。</li>
+      </ul>
+
+      <h3>8.3 两条会拦住你的校验</h3>
+      <div class="note note--danger">
+        <p><b>测评编号必须与设备资料一致。</b>应用会读设备目录下 <code>OpenHarmony兼容性批量结果_*\result.json</code> 记录的编号；和你在页面填的不一致会直接拒跑，避免把 A 设备的草稿挂到 B 设备的认证记录下。</p>
+      </div>
+      <div class="note note--warn">
+        <p><b>平台会吃掉尖括号。</b>豁免原因里的 <code>&lt;1500</code> 这类写法，平台会把 <code>&lt;</code> 当标签过滤掉，导致回读不一致。应用在填表前会换成全角 <code>＜</code>，不影响语义。</p>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section id="review">
+      <h2><span class="num">9</span>报告复审</h2>
+      <p class="lead">提交前的最后一道自检：套件跑全没有、失败项有没有豁免。</p>
+      <ol class="steps">
+        <li>选设备目录（要含工作簿、<code>report\</code>、<code>exemption\</code>），点「开始复审」。</li>
+        <li>看「结论」：<span class="chip" style="color:var(--ok);border-color:var(--ok)">可以提交</span> 表示无阻塞；否则会写清阻塞原因。</li>
+        <li>看「套件明细」：期望模块数 / 实跑 / 用例数 / 失败数 / 缺失 / 有豁免 / 未豁免，每行还会列出未通过模块名。</li>
+        <li>看右栏「未通过模块」：未豁免的排最前，点进 <code>exemption</code> 补资料后重跑复审。</li>
+        <li>看「没跑到的模块」：最小集里有、所有轮次都没有结果的模块，需要重跑测试。</li>
+      </ol>
+
+      <h3>9.1 判定口径</h3>
+      <table>
+        <thead><tr><th>项</th><th>怎么算</th></tr></thead>
+        <tbody>
+          <tr><td>期望模块</td><td>按申请资料「是否带屏」选对应最小测试集清单，跑全才算过</td></tr>
+          <tr><td>已跑模块</td><td>所有 <code>report-N</code> 的并集；每个模块以它<b>最后出现的那一轮</b>结论为准（增量补测只含失败子集）</td></tr>
+          <tr><td>用例数</td><td>每个模块最后一轮 <code>result/*.xml</code> 的 tests 相加（不是 summary 根节点那个只算本轮的数）</td></tr>
+          <tr><td>真失败</td><td><code>result="false"</code> 且 <code>status="run"</code>；<code>status=disable/skip</code> 是被忽略用例，不算失败</td></tr>
+          <tr><td>豁免覆盖</td><td>失败模块或测试套在 <code>exemption\&lt;分类&gt;\</code> 下有同名目录即算已豁免</td></tr>
+          <tr><td>无屏方案</td><td>跳过 DCTS 与 ACTS-VALIDATOR，不检也不算缺</td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <b>「提示」不是错误。</b>例如 ACTS-VALIDATOR 的用例数与参考口径差几条，会以灰字显示「提示（不影响结论）」，不会阻塞提交。
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section id="settings">
+      <h2><span class="num">10</span>设置、托盘与单实例</h2>
+      <h3>10.1 外观</h3>
+      <p>深色 / 浅色 / 跟随系统三选一，切换即时生效并记住选择。</p>
+      <h3>10.2 关闭 = 收进托盘</h3>
+      <ul>
+        <li>点窗口右上角关闭，窗口隐藏、<b>进程继续跑</b>，正在进行的测试与上传不受影响。</li>
+        <li>托盘图标单击 / 双击，或右键菜单「显示主界面」，可以把窗口叫回来。</li>
+        <li>真正退出：托盘右键菜单 →「退出」。</li>
+      </ul>
+      <h3>10.3 单实例</h3>
+      <p>任何时刻只允许一个进程。窗口收进托盘后再双击 exe，只会把已有窗口叫出来，不会起第二个服务。</p>
+      <div class="note note--warn">
+        如果托盘里找不到图标，可能被系统折叠了：点任务栏的 <span class="kbd">^</span> 展开隐藏图标区域。
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section id="reports">
+      <h2><span class="num">11</span>报告归档与判卷口径</h2>
+      <h3>11.1 归档位置</h3>
+      <p>每轮一份，编号递增不覆盖：</p>
+      <pre><code>&lt;设备目录&gt;\report\ACTS\report-1\
+                     report-2\      ← 补测轮
+报告内：summary_report.xml  判卷依据
+        summary_report.html 人看的报告
+        result\*.xml        每个模块的用例明细
+        log\                模块日志</code></pre>
+
+      <h3>11.2 各套件的报告格式本来就不一样</h3>
+      <p>这是上游套件包自带的差异，<b>不是 bug</b>：</p>
+      <table>
+        <thead><tr><th>套件</th><th>xdevice 版本</th><th>报告长相</th></tr></thead>
+        <tbody>
+          <tr><td>SSTS</td><td>旧版</td><td><code>details_report.html</code> / <code>failures_report.html</code> / <code>passes_report.html</code></td></tr>
+          <tr><td>ACTS / ACTS-VALIDATOR / HATS / DCTS</td><td>新版</td><td><code>static\</code>（Vue 页）+ <code>summary_report.html</code></td></tr>
+        </tbody>
+      </table>
+      <p>应用在跑某个套件前会核对该套件 <code>tools\</code> 里的 xdevice 版本指纹，不一致就整套重装，避免用错版本跑出错误格式的报告。</p>
+
+      <h3>11.3 判卷</h3>
+      <ul>
+        <li>以 <code>summary_report.xml</code> 为准：<code>failures &gt; 0</code> 或整模块 <code>ignored</code> 都算失败。</li>
+        <li>跑了一半中断的轮次，会用已完成模块的 <code>result\*.xml</code> 合成一份完整 summary 再归档，保证补测能接着跑。</li>
+        <li>每个套件的执行命令、退出码、stderr 尾巴会写进本次运行目录下的 <code>run.log</code>，排查时先看它。</li>
+      </ul>
+    </section>
+
+    <!-- 12 -->
+    <section id="faq">
+      <h2><span class="num">12</span>常见问题</h2>
+
+      <h3>跑测试报「已有任务正在执行」</h3>
+      <p>同一时间只允许一个测试任务。等当前任务结束，或先点「停止测试」。资料任务（评测资料 / 豁免）与测试任务也互斥。</p>
+
+      <h3>设备不在可选列表里</h3>
+      <ul>
+        <li><code>hdc list targets</code> 看不到：检查线缆、USB 调试授权。</li>
+        <li>能看到但显示「占用」：被别的测试或别的工具占着，先释放。</li>
+        <li>显示「已选·不在线」：上次会话遗留的选择，点掉重新选。</li>
+      </ul>
+
+      <h3>SSTS 报告跟别的套件长得不一样</h3>
+      <p>正常，见 11.2。SSTS 用旧版 xdevice，本来就是 details/passes 那套 HTML。</p>
+
+      <h3>DCTS 全部 SoftBus 模块失败</h3>
+      <p>先确认资源安装是否真的成功：设备上应存在 <code>/data/local/tmp/dsoftbusTest</code>、<code>/data/local/tmp/socketdsoftbusTest</code>、<code>/data/test.wav</code>，且 <code>softbus_trans_permission.json</code> 里有 <code>com.communication.demo</code> 条目。缺任一项说明 <code>dcts_resource.bat</code> 没跑完。</p>
+
+      <h3>dcct 配不上 / 连的是旧设备</h3>
+      <p>应用在组网前会先解绑盒子与被测设备上的历史连接（用 <code>bm clean</code> 清 dcct 数据）。若仍失败，人工在 dcct 里删掉「已连接设备」后重跑 DCTS。</p>
+
+      <h3>豁免保存时提示 FIELD_VALUE_MISMATCH</h3>
+      <p>平台对某些字符做了过滤（最常见是 <code>&lt;</code> <code>&gt;</code>）。应用现在填之前会换全角并给出「第 N 个字起不同」的定位信息；如果仍报错，把那一行报错发回来，说明平台又过滤了新字符。</p>
+
+      <h3>应用启动没反应 / 有两个图标</h3>
+      <ul>
+        <li>两个图标：旧版本遗留实例。关掉全部实例后重开一次即恢复单实例。</li>
+        <li>启动没反应：先看托盘是否已有实例在跑（单实例会直接退出）；再检查是否被安全软件拦了。</li>
+      </ul>
+
+      <h3>想回滚到上一版</h3>
+      <p>到 GitHub Releases 下载上一个版本的 <code>XTS-Reporter-*-portable.exe</code> 直接跑即可，应用不在系统里装任何东西。</p>
+    </section>
+
+    <div class="foot">
+      XTS 报告上传 · v1.0.1 · 本教程随应用发布；发现页面与实际不符，请以应用界面为准并反馈。
+    </div>
+  </main>
+</div>
+
+<script>
+  // 主题：跟随系统 / 深色 / 浅色 三态切换，记住选择
+  (function () {
+    var KEY = 'xts-guide-theme';
+    var html = document.documentElement;
+    var btn = document.getElementById('themeBtn');
+    var modes = ['system', 'dark', 'light'];
+    var labels = { system: '跟随系统', dark: '深色', light: '浅色' };
+    function apply(mode) {
+      if (mode === 'system') html.removeAttribute('data-theme');
+      else html.setAttribute('data-theme', mode);
+      btn.textContent = labels[mode];
+      try { localStorage.setItem(KEY, mode); } catch (e) {}
+    }
+    var saved = 'system';
+    try { saved = localStorage.getItem(KEY) || 'system'; } catch (e) {}
+    if (modes.indexOf(saved) < 0) saved = 'system';
+    apply(saved);
+    btn.addEventListener('click', function () {
+      var next = modes[(modes.indexOf(saved) + 1) % modes.length];
+      saved = next;
+      apply(next);
+    });
+  })();
+
+  // 目录高亮当前章节
+  (function () {
+    var links = [].slice.call(document.querySelectorAll('.toc a'));
+    var sections = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+    function onScroll() {
+      var pos = window.scrollY + 120;
+      var current = 0;
+      sections.forEach(function (s, i) { if (s && s.offsetTop <= pos) current = i; });
+      links.forEach(function (a, i) { a.classList.toggle('active', i === current); });
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
+</body>
+</html>
