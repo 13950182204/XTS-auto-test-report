@@ -666,6 +666,30 @@ export async function startServer(userDataDir: string, rendererDir: string, log:
     }
   }
 
+  /** 报告复审：核对设备目录下 report/ 与 exemption/ 是否满足提交要求（scripts/report_review.mjs）。 */
+  async function handleReportReview(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: '只支持 POST。' })
+    try {
+      const body = await readBody(req)
+      const value = currentSettings()
+      const dir = text(body.dir) || text(value.workbookPath)
+      const testcases = text(body.testcasesPath) || text(value.testCasesPath) || DEFAULT_TESTCASES_PATH
+      if (!dir) return sendJson(res, 200, { ok: false, message: '没有填写设备目录。' })
+      if (!existsSync(dir)) return sendJson(res, 200, { ok: false, message: `设备目录不存在：${dir}` })
+      const result = await runScript('report_review.mjs', ['--dir', dir, '--testcases', testcases], {}, [])
+      for (const line of result.output.split(/\r?\n/).reverse()) {
+        const parsed = parseStructuredLine<Record<string, unknown>>(line, 'REPORT_REVIEW_JSON=')
+        if (!parsed) continue
+        if (parsed.ok !== true) return sendJson(res, 200, { ok: false, message: text(parsed.error) || '复审失败。' })
+        return sendJson(res, 200, { ok: true, review: parsed })
+      }
+      sendJson(res, 200, { ok: false, message: `复审脚本未返回结果：${String(result.output || '').slice(-300)}` })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, 200, { ok: false, message: `复审失败：${message}` })
+    }
+  }
+
   async function handleWaiverScan(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST。' })
     try {
@@ -1297,6 +1321,7 @@ async function handleAuthLogout(req: http.IncomingMessage, res: http.ServerRespo
     [`${API_PREFIX}/device/stop-pair`, handleDeviceStopPair],
     [`${API_PREFIX}/device/connect`, handleDeviceConnect],
     [`${API_PREFIX}/dialog/pick`, handlePickPath],
+    [`${API_PREFIX}/report/review`, handleReportReview],
     [`${API_PREFIX}/auth/status`, handleAuthStatus],
     [`${API_PREFIX}/auth/login`, handleAuthLogin],
     [`${API_PREFIX}/auth/logout`, handleAuthLogout],

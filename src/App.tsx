@@ -7,11 +7,12 @@ import { MaterialsPage } from './pages/Materials.js'
 import { TestRunnerPage } from './pages/TestRunner.js'
 import { MirrorPage } from './pages/Mirror.js'
 import { WaiverPage } from './pages/Waiver.js'
+import { ReportReviewPage } from './pages/ReportReview.js'
 import { SettingsPage } from './pages/SettingsPage.js'
 import { OverviewPage } from './pages/Overview.js'
 import { LoginPage } from './pages/Login.js'
 
-type PageId = 'overview' | 'devices' | 'materials' | 'test' | 'mirror' | 'waiver' | 'settings'
+type PageId = 'overview' | 'devices' | 'materials' | 'test' | 'mirror' | 'waiver' | 'review' | 'settings'
 
 const NAV: Array<{ id: PageId; label: string; icon: string }> = [
   { id: 'overview', label: '概览', icon: '◆' },
@@ -20,6 +21,7 @@ const NAV: Array<{ id: PageId; label: string; icon: string }> = [
   { id: 'test', label: 'XTS 自动测试', icon: '▶' },
   { id: 'mirror', label: '镜像固件上传', icon: '⬆' },
   { id: 'waiver', label: '豁免资料', icon: '✎' },
+  { id: 'review', label: '报告复审', icon: '✓' },
   { id: 'settings', label: '设置', icon: '⚙' },
 ]
 
@@ -85,6 +87,7 @@ export function App(): ReactElement {
   else if (page === 'test') body = <TestRunnerPage state={state} test={test} />
   else if (page === 'mirror') body = <MirrorPage state={state} />
   else if (page === 'waiver') body = <WaiverPage state={state} />
+  else if (page === 'review') body = <ReportReviewPage />
   else if (page === 'settings') body = <SettingsPage />
   else body = <OverviewPage state={state} test={test} onNavigate={setPage} />
 

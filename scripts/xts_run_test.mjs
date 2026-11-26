@@ -17,6 +17,7 @@ import {
   parseHdcTargets,
   parseIfconfigInet,
   parseRunListLine,
+  readScreenFromWorkbook,
   parseSnsInput,
   parseSummaryReport,
   parseTaskInfoRecordText,
@@ -1124,6 +1125,18 @@ async function doRun(args) {
       : '';
     const screens = {};
     let screen = forcedScreen;
+    // 有屏/无屏优先按申请资料认定（用户 2026-11-26）：同一份资料决定了该用哪套最小测试集，
+    // 比 hidumper 探测更权威——hidumper 在某些产品上返回的屏信息与实际认证口径不一致。
+    // 目录里没有 xlsx（例如填的是批量父目录）时才退回 hidumper 探测。
+    if (!screen) {
+      const fromWorkbook = await readScreenFromWorkbook(workbookRoot);
+      if (fromWorkbook.screen) {
+        screen = fromWorkbook.screen;
+        warnings.push(`有屏/无屏按申请资料认定：${fromWorkbook.source} → ${screen === 'yes' ? '有屏' : '无屏'}`);
+      } else if (fromWorkbook.note) {
+        warnings.push(`${fromWorkbook.note}，改用 hidumper 探测`);
+      }
+    }
     if (!screen) {
       for (const sn of sns) {
         const dump = await hdcCommand(hdc, ['-t', sn, 'shell', 'hidumper', '-s', 'RenderService', '-a', 'screen']);

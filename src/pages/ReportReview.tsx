@@ -1,0 +1,183 @@
+import { useEffect, useState, type ReactElement } from 'react'
+import { request } from '../api.js'
+import { Bar, Chip, Field, Panel, StatusLine, num } from '../components.js'
+
+/** 报告复审：核对一个设备目录的 report/ 与 exemption/ 是否满足提交要求。 */
+
+type ReviewSuite = {
+  key: string
+  label: string
+  reportDir?: string
+  rounds?: number
+  expectedModules?: number
+  expectedSource?: string
+  referenceTests?: number
+  referenceModules?: number
+  ranModules?: number
+  tests?: number
+  failures?: number
+  missingModules?: string[]
+  failedItems?: ReviewItem[]
+  exemptedItems?: ReviewItem[]
+  unexemptedItems?: ReviewItem[]
+  problems?: string[]
+  ok?: boolean
+}
+
+type ReviewItem = {
+  module?: string
+  testsuites?: string[]
+  caseCount?: number
+  cases?: string[]
+  failureCount?: number
+  round?: string
+  waiverPath?: string
+  waiverReports?: string[]
+}
+
+type Review = {
+  deviceDir?: string
+  screen?: string
+  screenSource?: string
+  minSetDir?: string
+  suites?: ReviewSuite[]
+  verdict?: string
+  summary?: { suites?: number; passed?: number; blocked?: number; unexempted?: number; missingModules?: number }
+  notes?: string[]
+}
+
+export function ReportReviewPage(): ReactElement {
+  const [dir, setDir] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [review, setReview] = useState<Review | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      const response = await request<{ ok: boolean; settings?: Record<string, string> }>('settings', 'GET')
+      if (active && response.ok && response.settings) setDir(response.settings.workbookPath ?? '')
+    })()
+    return () => { active = false }
+  }, [])
+
+  async function run(): Promise<void> {
+    setBusy(true); setError('')
+    const response = await request<{ ok: boolean; review?: Review; message?: string }>('report/review', 'POST', { dir: dir.trim() })
+    setBusy(false)
+    if (!response.ok || !response.review) { setError(response.message || '复审失败。'); return }
+    setReview(response.review)
+  }
+
+  const suites = review?.suites ?? []
+  const verdict = review?.verdict ?? ''
+  const summary = review?.summary ?? {}
+  const screenLabel = review?.screen === 'yes' ? '有屏' : review?.screen === 'no' ? '无屏' : '未知'
+  const blocked = suites.filter((item) => item.ok !== true)
+
+  return (
+    <>
+      <div className="page-head--bar">
+        <h1>报告复审</h1>
+        <span className="page-head__meta">按最小测试集核对 report/ 是否跑全跑通；没通过的必须在 exemption/ 里有豁免</span>
+        <span className="page-head__actions">
+          <button className="btn btn--primary" disabled={busy} onClick={() => void run()}>{busy ? '复审中…' : '开始复审'}</button>
+        </span>
+      </div>
+      <div className="workbench">
+        <div className="workbench__main">
+          <Panel title="复审对象">
+            <div className="grid">
+              <Field id="rr-dir" label="设备目录" wide pick="directory" value={dir} placeholder="点右侧「选择文件夹」选设备目录"
+                hint="目录里要有 OpenHarmony兼容性申请资料.xlsx、report/、exemption/"
+                disabled={busy} onChange={setDir} />
+            </div>
+          </Panel>
+
+          {error ? <StatusLine tone="error">{error}</StatusLine> : null}
+
+          {review ? (
+            <>
+              <Panel title="结论" meta={`${num(summary.passed) ?? 0}/${num(summary.suites) ?? suites.length} 套件通过`}>
+                <div className="grid">
+                  <div className="row-top">
+                    <Chip tone={verdict === 'pass' ? 'ok' : 'warn'}>{verdict === 'pass' ? '可以提交' : '还有阻塞项'}</Chip>
+                    <span className="chip chip--neutral">{`${screenLabel}设备`}</span>
+                    {review.screenSource ? <span className="path">{review.screenSource}</span> : null}
+                  </div>
+                  <p className="path" title={review.minSetDir}>{`最小测试集：${review.minSetDir || '未匹配到'}`}</p>
+                  {review.notes?.length ? <p className="problem">{review.notes.join('；')}</p> : null}
+                </div>
+              </Panel>
+
+              <Panel title="套件明细" scroll scrollMax={260}>
+                <ul className="list">
+                  {suites.map((suite) => (
+                    <li className={`row ${suite.ok ? 'row--ready' : 'row--blocked'}`} key={suite.key}>
+                      <div className="row-top">
+                        <Chip tone={suite.ok ? 'ok' : 'warn'}>{suite.label ?? suite.key}</Chip>
+                        <span className="name">{(num(suite.expectedModules) ?? 0) > 0
+                          ? `期望 ${num(suite.expectedModules)} 模块 · 实跑 ${num(suite.ranModules) ?? 0} · 用例 ${num(suite.tests) ?? 0}`
+                          : `期望 ${num(suite.referenceTests) ?? 0} 用例（参考口径）· 实跑 ${num(suite.ranModules) ?? 0} 模块 · 用例 ${num(suite.tests) ?? 0}`}</span>
+                        <span className="pct push-right">{`失败 ${num(suite.failures) ?? 0}`}</span>
+                      </div>
+                      <Bar percent={suite.ok ? 100 : 55} danger={!suite.ok} label={`${suite.label} 复审`} />
+                      <p className="path">{`缺失 ${suite.missingModules?.length ?? 0} · 有豁免 ${suite.exemptedItems?.length ?? 0} · 未豁免 ${suite.unexemptedItems?.length ?? 0}${suite.reportDir ? ` · ${suite.rounds ?? 1} 轮` : ''}`}</p>
+                      {suite.problems?.length ? <p className="problem">{suite.problems.join('；')}</p> : null}
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+
+              {blocked.length > 0 ? (
+                <Panel title="阻塞项" meta={`${blocked.length} 个套件`}>
+                  <ul className="list">
+                    {blocked.flatMap((suite) => [
+                      ...(suite.unexemptedItems ?? []).map((item) => ({ key: `${suite.key}-u-${item.module}`, label: suite.label ?? suite.key, item, kind: '未豁免' })),
+                      ...(suite.missingModules ?? []).slice(0, 20).map((module) => ({ key: `${suite.key}-m-${module}`, label: suite.label ?? suite.key, item: { module } as ReviewItem, kind: '没跑到' })),
+                    ]).map(({ key, label, item, kind }) => (
+                      <li className="row row--blocked" key={key}>
+                        <div className="row-top">
+                          <Chip tone="warn">{kind}</Chip>
+                          <span className="name" title={item.module}>{`${label} · ${item.module ?? ''}`}</span>
+                          {item.caseCount ? <span className="pct push-right">{`${item.caseCount} 条失败用例`}</span> : null}
+                        </div>
+                        {item.testsuites?.length ? <p className="path">{`测试套：${item.testsuites.join('、')}`}</p> : null}
+                        {item.cases?.length ? <p className="path" title={item.cases.join(', ')}>{`用例：${item.cases.slice(0, 6).join('、')}${item.cases.length > 6 ? ' …' : ''}`}</p> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </Panel>
+              ) : null}
+            </>
+          ) : (
+            <Panel title="复审结果">
+              <p className="empty">还没有复审结果：选好设备目录后点右上角「开始复审」。</p>
+            </Panel>
+          )}
+        </div>
+
+        <div className="workbench__side">
+          <Panel title="已豁免的失败项" meta={review ? `${suites.reduce((sum, item) => sum + (item.exemptedItems?.length ?? 0), 0)} 项` : undefined} fill scroll>
+            {review && suites.some((item) => (item.exemptedItems?.length ?? 0) > 0) ? (
+              <ul className="list">
+                {suites.flatMap((suite) => (suite.exemptedItems ?? []).map((item) => (
+                  <li className="row" key={`${suite.key}-${item.module}`}>
+                    <div className="row-top">
+                      <Chip tone="ok">{suite.label ?? suite.key}</Chip>
+                      <span className="name" title={item.module}>{item.module ?? ''}</span>
+                      <span className="pct push-right">{`${item.caseCount ?? 0} 条`}</span>
+                    </div>
+                    <p className="path" title={item.waiverPath}>{item.waiverPath ? `豁免：${item.waiverPath}` : '无豁免资料'}</p>
+                  </li>
+                )))}
+              </ul>
+            ) : (
+              <p className="empty">豁免覆盖情况会显示在这里。</p>
+            )}
+          </Panel>
+        </div>
+      </div>
+    </>
+  )
+}

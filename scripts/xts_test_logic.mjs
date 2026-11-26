@@ -508,3 +508,52 @@ export function buildSummaryIni({ testType, deviceName, hostInfo, startTime, end
 export function buildTaskInfoRecord({ command, sessionId, reportPath, dataReports, unsuccessfulParams = {} }) {
   return `${JSON.stringify({ command, session_id: sessionId, report_path: reportPath, unsuccessful_params: unsuccessfulParams, data_reports: dataReports }, null, 2)}\n`;
 }
+
+/**
+ * 从设备目录的申请资料 xlsx 读「是否带屏」（用户 2026-11-26 要求：按申请资料选测试集，不靠 hidumper 猜）。
+ * 返回 'yes' | 'no' | ''（读不到/没填）。不同模板把值放在不同列，所以扫整行取第一个非空单元格；
+ * 工作表优先「测评编号已填写」的那张，避免读到模板空表。
+ */
+export async function readScreenFromWorkbook(deviceDir) {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const entries = await fs.readdir(deviceDir).catch(() => []);
+  const file = entries.find((name) => /兼容性申请资料.*\.xlsx$/i.test(name) && !name.startsWith('~$'));
+  if (!file) return { screen: '', source: '', note: '设备目录里没有 OpenHarmony兼容性申请资料.xlsx' };
+  let ExcelJS;
+  try {
+    ExcelJS = (await import('exceljs')).default;
+  } catch {
+    return { screen: '', source: '', note: '未安装 exceljs，无法读取申请资料' };
+  }
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(path.join(deviceDir, file));
+  const cellText = (cell) => {
+    const value = cell?.value;
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object' && 'text' in value) return String(value.text ?? '').trim();
+    if (typeof value === 'object' && 'result' in value) return String(value.result ?? '').trim();
+    return String(value).trim();
+  };
+  const sheets = [];
+  for (const sheet of workbook.worksheets) {
+    let certified = false;
+    let screen = '';
+    sheet.eachRow((row) => {
+      const label = cellText(row.getCell(1));
+      if (/测评编号/.test(label) && cellText(row.getCell(2))) certified = true;
+      if (!/是否带屏/.test(label)) return;
+      for (let col = 2; col <= Math.max(row.cellCount, 2); col += 1) {
+        const text = cellText(row.getCell(col));
+        if (!text) continue;
+        if (/不带屏|无屏|^否$/.test(text)) screen = 'no';
+        else if (/带屏|^是$/.test(text)) screen = screen || 'yes';
+      }
+    });
+    sheets.push({ name: sheet.name, certified, screen });
+  }
+  const withScreen = sheets.filter((item) => item.screen);
+  const hit = withScreen.find((item) => item.certified) ?? withScreen[0];
+  if (!hit) return { screen: '', source: `${file}`, note: '申请资料里「是否带屏」为空' };
+  return { screen: hit.screen, source: `${file}#${hit.name}`, note: '' };
+}
