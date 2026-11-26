@@ -118,7 +118,7 @@ export function ReportReviewPage(): ReactElement {
                 </div>
               </Panel>
 
-              <Panel title="套件明细" scroll scrollMax={260}>
+              <Panel title="套件明细">
                 <ul className="list">
                   {suites.map((suite) => (
                     <li className={`row ${suite.ok ? 'row--ready' : 'row--blocked'}`} key={suite.key}>
@@ -145,28 +145,6 @@ export function ReportReviewPage(): ReactElement {
                 </ul>
               </Panel>
 
-              <Panel title="未通过模块" meta={failedCount > 0 ? `${failedCount} 个模块` : '无'} scroll scrollMax={280}>
-                {failedEntries.length === 0 ? (
-                  <p className="empty">没有失败模块。</p>
-                ) : (
-                  <ul className="list">
-                    {failedEntries.map(({ suite, item }) => (
-                      <li className={`row ${item.waiverPath ? '' : 'row--blocked'}`} key={`${suite.key}-${item.module}`}>
-                        <div className="row-top">
-                          <Chip tone={item.waiverPath ? 'ok' : 'warn'}>{item.waiverPath ? '已豁免' : '未豁免'}</Chip>
-                          <Chip tone="neutral">{suite.label ?? suite.key}</Chip>
-                          <span className="name" title={item.module}>{item.module ?? ''}</span>
-                          <span className="pct push-right">{`${item.caseCount ?? item.failureCount ?? 0} 条失败`}</span>
-                        </div>
-                        {item.testsuites?.length ? <p className="path">{`测试套：${item.testsuites.join('、')}`}</p> : null}
-                        {item.cases?.length ? <p className="path" title={item.cases.join(', ')}>{`用例：${item.cases.slice(0, 6).join('、')}${item.cases.length > 6 ? ' …' : ''}`}</p> : null}
-                        <p className="path" title={item.waiverPath}>{item.waiverPath ? `豁免：${item.waiverPath}` : '缺豁免资料（需在 exemption/ 下补）'}</p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </Panel>
-
               <Panel title="没跑到的模块" meta={missingCount > 0 ? `${missingCount} 个` : '无'} scroll scrollMax={220}>
                 {missingEntries.length === 0 ? (
                   <p className="empty">最小测试集里的模块都跑到了。</p>
@@ -189,6 +167,29 @@ export function ReportReviewPage(): ReactElement {
               <p className="empty">还没有复审结果：选好设备目录后点右上角「开始复审」。</p>
             </Panel>
           )}
+        </div>
+
+        <div className="workbench__side">
+          <Panel title="未通过模块" meta={failedCount > 0 ? `${failedCount} 个` : '无'} fill scroll>
+            {failedEntries.length === 0 ? (
+              <p className="empty">{review ? '没有失败模块。' : '复审后这里会列出未通过的模块。'}</p>
+            ) : (
+              <ul className="list">
+                {failedEntries.map(({ suite, item }) => (
+                  <li className={`row ${item.waiverPath ? '' : 'row--blocked'}`} key={`${suite.key}-${item.module}`}>
+                    <div className="row-top">
+                      <Chip tone={item.waiverPath ? 'ok' : 'warn'}>{item.waiverPath ? '已豁免' : '未豁免'}</Chip>
+                      <Chip tone="neutral">{suite.label ?? suite.key}</Chip>
+                      <span className="name" title={item.module}>{item.module ?? ''}</span>
+                      <span className="pct push-right">{`${item.caseCount ?? item.failureCount ?? 0} 条`}</span>
+                    </div>
+                    {item.testsuites?.length ? <p className="path" title={item.testsuites.join('、')}>{`测试套：${item.testsuites.slice(0, 3).join('、')}${item.testsuites.length > 3 ? ' …' : ''}`}</p> : null}
+                    <p className="path" title={item.waiverPath}>{item.waiverPath ? `豁免：${item.waiverPath}` : '缺豁免资料'}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
         </div>
       </div>
     </>
