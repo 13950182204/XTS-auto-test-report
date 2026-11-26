@@ -190,19 +190,6 @@ export function ReportReviewPage(): ReactElement {
             </Panel>
           )}
         </div>
-
-        <div className="workbench__side">
-          <Panel title="复审口径" fill scroll>
-            <ul className="list">
-              <li className="row"><div className="row-top"><span className="name">期望模块</span><span className="pct push-right">最小测试集_有屏/无屏</span></div><p className="path">按申请资料「是否带屏」选对应清单，跑全才算过</p></li>
-              <li className="row"><div className="row-top"><span className="name">多轮聚合</span><span className="pct push-right">取并集</span></div><p className="path">增量补测只含失败子集，已跑模块按所有轮次并集算</p></li>
-              <li className="row"><div className="row-top"><span className="name">用例数</span><span className="pct push-right">各模块 result 求和</span></div><p className="path">取每个模块最后一轮 result XML 的 tests 相加；不用 summary 根节点的 tests（它只算本轮，且与 result 会差几条）</p></li>
-              <li className="row"><div className="row-top"><span className="name">真失败</span><span className="pct push-right">result=false 且 status=run</span></div><p className="path">status=disable/skip 是被忽略用例，不算失败</p></li>
-              <li className="row"><div className="row-top"><span className="name">豁免覆盖</span><span className="pct push-right">exemption/&lt;分类&gt;/&lt;模块或套件&gt;</span></div><p className="path">失败模块或测试套在对应目录下存在即算已豁免</p></li>
-              <li className="row"><div className="row-top"><span className="name">无屏方案</span><span className="pct push-right">跳过 DCTS / VALIDATOR</span></div><p className="path">这两项没有无屏最小集，不检也不算缺</p></li>
-            </ul>
-          </Panel>
-        </div>
       </div>
     </>
   )
