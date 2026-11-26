@@ -216,6 +216,7 @@ async function reviewSuite({ suite, deviceDir, minSetDir, screen }) {
     referenceModules: 0,
     ranModules: 0,
     tests: 0,
+    summaryTests: 0,
     failures: 0,
     missingModules: [],
     failedItems: [],
@@ -262,11 +263,16 @@ async function reviewSuite({ suite, deviceDir, minSetDir, screen }) {
     return result;
   }
   const summary = parseSummaryReport(summaryText);
-  result.tests = Number((/<testsuites\b[^>]*\btests="(\d+)"/.exec(summaryText) ?? [])[1]) || 0;
+  // summary 的 tests 是「本轮的」且与实际 result 不一致（实测 validator：summary 说 160、
+  // result/*.xml 里有 162 个 testcase），所以用例数按每个模块最后一次结果的 tests 求和，
+  // 多轮时也不会只算最后一个补测轮的那几条。
+  const summaryTests = Number((/<testsuites\b[^>]*\btests="(\d+)"/.exec(summaryText) ?? [])[1]) || 0;
   result.failures = summary.failures ?? 0;
 
   const modules = await collectModuleResults(rounds);
   result.ranModules = modules.size;
+  result.tests = [...modules.values()].reduce((sum, item) => sum + (item.tests || 0), 0);
+  result.summaryTests = summaryTests;
 
   // 缺失模块：最小集里有、所有轮次都没跑到。
   if (expectedModules.length > 0) {
