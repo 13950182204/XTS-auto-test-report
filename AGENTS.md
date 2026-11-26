@@ -28,3 +28,11 @@
 - 路径输入一律走系统对话框（主进程 `dialog.showOpenDialog`，`POST /dialog/pick`），不手填。
 - 平台表单会吃掉 `<` `>`，填之前在 `sanitizeForPlatform` 里换成全角。
 - 批量豁免前校验测评编号与设备资料一致（读设备目录下 `OpenHarmony兼容性批量结果_*/result.json`）。
+
+## 发版：必须由用户显式要求（硬规则，2026-11-26 用户要求）
+
+- **禁止**自行创建 GitHub Release、禁止自行打 tag、禁止自行改 `package.json` 的 `version`。
+- 允许的操作：本地 `npm run dist` 打包、本地验证 exe、准备发版说明草稿。
+- 只有用户明确说「发版 / 发布 / 出个 release」时，才执行：
+  `改 version → 打包 → 打 tag → 建 Release → 上传 exe`，并在完成后回报 tag 与资产 URL。
+- 已发布过的 Release 不覆盖资产；修正走新版本号。
